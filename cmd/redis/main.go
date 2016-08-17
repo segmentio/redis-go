@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/segmentio/redis"
+	"github.com/segmentio/redis-go"
 )
 
 var logger = log.New(os.Stderr, "redis: ", log.LstdFlags)
