@@ -51,13 +51,13 @@ func main() {
 
 func handle(res redis.ResponseWriter, req *redis.Request) {
 	switch req.Cmd {
-	case redis.GET:
+	case "GET":
 		handleGET(res, req)
 
-	case redis.SET:
+	case "SET":
 		handleSET(res, req)
 
-	case redis.PING:
+	case "PING":
 		handlePING(res, req)
 	}
 }
@@ -95,7 +95,7 @@ func handleSET(res redis.ResponseWriter, req *redis.Request) {
 }
 
 func handlePING(res redis.ResponseWriter, req *redis.Request) {
-	var msg = string(redis.PONG)
+	var msg = "PONG"
 	var err error
 
 	if req.Args.Len() != 0 {
