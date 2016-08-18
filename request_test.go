@@ -18,13 +18,13 @@ func TestRequestWrite(t *testing.T) {
 		},
 		{
 			r: Request{
-				Cmd: SET,
+				Cmd: "SET",
 			},
 			s: "*1\r\n$3\r\nSET\r\n",
 		},
 		{
 			r: Request{
-				Cmd:  SET,
+				Cmd:  "SET",
 				Args: Args("hello", "world"),
 			},
 			s: "*3\r\n$3\r\nSET\r\n$5\r\nhello\r\n$5\r\nworld\r\n",
@@ -52,14 +52,14 @@ func TestReadRequest(t *testing.T) {
 		{
 			s: "*1\r\n$3\r\nSET\r\n",
 			r: Request{
-				Cmd:  SET,
+				Cmd:  "SET",
 				Args: Args(),
 			},
 		},
 		{
 			s: "*3\r\n$3\r\nSET\r\n$5\r\nhello\r\n$5\r\nworld\r\n",
 			r: Request{
-				Cmd:  SET,
+				Cmd:  "SET",
 				Args: Args("hello", "world"),
 			},
 		},

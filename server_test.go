@@ -10,7 +10,7 @@ import (
 
 func TestServerDefaultValue(t *testing.T) {
 	_, lstn := serve(t, HandlerFunc(func(res ResponseWriter, req *Request) {
-		if req.Cmd != SET {
+		if req.Cmd != "SET" {
 			t.Error("invalid command received by the server:", req.Cmd)
 		}
 		if s, err := ReadString(req.Args); s != "hello" {
@@ -25,7 +25,7 @@ func TestServerDefaultValue(t *testing.T) {
 	conn := dial(t, lstn.Addr())
 	defer conn.Close()
 
-	if err := conn.WriteRequest(NewRequest(SET, "hello", "world")); err != nil {
+	if err := conn.WriteRequest(NewRequest("SET", "hello", "world")); err != nil {
 		t.Error(err)
 		return
 	}
@@ -44,7 +44,7 @@ func TestServerDefaultValue(t *testing.T) {
 
 func TestServerOneValue(t *testing.T) {
 	_, lstn := serve(t, HandlerFunc(func(res ResponseWriter, req *Request) {
-		if req.Cmd != GET {
+		if req.Cmd != "GET" {
 			t.Error("invalid command received by the server:", req.Cmd)
 		}
 		if s, err := ReadString(req.Args); s != "hello" {
@@ -57,7 +57,7 @@ func TestServerOneValue(t *testing.T) {
 	conn := dial(t, lstn.Addr())
 	defer conn.Close()
 
-	if err := conn.WriteRequest(NewRequest(GET, "hello")); err != nil {
+	if err := conn.WriteRequest(NewRequest("GET", "hello")); err != nil {
 		t.Error(err)
 		return
 	}
@@ -87,7 +87,7 @@ func TestServerStreamValue(t *testing.T) {
 	conn := dial(t, lstn.Addr())
 	defer conn.Close()
 
-	if err := conn.WriteRequest(NewRequest(GET)); err != nil {
+	if err := conn.WriteRequest(NewRequest("GET")); err != nil {
 		t.Error(err)
 		return
 	}

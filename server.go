@@ -113,7 +113,17 @@ func (s *Server) serve(c Conn) {
 
 		if req, err = c.ReadRequest(); err != nil {
 			if err != io.EOF {
-				s.logf("redis: failed to read request on %s->%s: %s", raddr, laddr, err)
+				switch e := err.(type) {
+				case net.Error:
+					if e.Temporary() {
+						s.logf("redis: temporary error on %s->%s: %s", raddr, laddr, err)
+						time.Sleep(100 * time.Millisecond)
+						continue
+					}
+					if !e.Timeout() {
+						s.logf("redis: failed to read request on %s->%s: %s", raddr, laddr, err)
+					}
+				}
 			}
 			return
 		}
