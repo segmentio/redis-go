@@ -11,20 +11,26 @@ import (
 type Conn interface {
 	net.Conn
 
-	// Flush writes all buffered data to the underlying connection.
+	// Flush writes all buffered data to the connection.
 	Flush() error
 
-	// ReadRequest reads a request from the underlying connection.
+	// ReadRequest reads a request from the connection.
 	ReadRequest() (*Request, error)
 
-	// ReadResponse reads a response from the underlying connection.
+	// ReadResponse reads a response from the connection.
 	ReadResponse(*Request) (*Response, error)
 
-	// WriteRequest writes a request to the underlying connection.
+	// ReadMessage reads a message from the connection.
+	ReadMessage() (*Message, error)
+
+	// WriteRequest writes a request to the connection.
 	WriteRequest(*Request) error
 
-	// WriteResponse writes a response to the underlying connection.
+	// WriteResponse writes a response to the connection.
 	WriteResponse(*Response) error
+
+	// WriteMessage writes a mesage to the connection.
+	WriteMessage(*Message) error
 }
 
 // NewConn wraps a net.Conn and returns a value that implements Conn.
@@ -61,6 +67,8 @@ func (c conn) ReadRequest() (req *Request, err error) { return ReadRequest(c.r) 
 
 func (c conn) ReadResponse(req *Request) (res *Response, err error) { return ReadResponse(c.r, req) }
 
+func (c conn) ReadMessage() (msg *Message, err error) { return ReadMessage(c.r) }
+
 func (c conn) WriteRequest(req *Request) (err error) {
 	if err = req.Write(c.w); err == nil {
 		err = c.w.Flush()
@@ -70,6 +78,13 @@ func (c conn) WriteRequest(req *Request) (err error) {
 
 func (c conn) WriteResponse(res *Response) (err error) {
 	if err = res.Write(c.w); err == nil {
+		err = c.w.Flush()
+	}
+	return
+}
+
+func (c conn) WriteMessage(msg *Message) (err error) {
+	if err = msg.Write(c.w); err == nil {
 		err = c.w.Flush()
 	}
 	return
