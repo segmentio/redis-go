@@ -65,8 +65,13 @@ func ReadMessage(r io.Reader) (msg *Message, err error) {
 		Input:  r,
 		Parser: &resp.Parser{},
 	})
+	n := dec.Len()
 
-	if n := dec.Len(); n != 3 {
+	if err = dec.Error(); err != nil {
+		return
+	}
+
+	if n != 3 {
 		err = fmt.Errorf("redis.ReadMessage: invalid array length encountered, expected 3 but got %d", n)
 		return
 	}
