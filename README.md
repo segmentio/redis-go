@@ -88,10 +88,13 @@ import (
 )
 
 func main() {
-    if err := redis.ListenAndServe(":6379", redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
-        // Read the request from req and writes the response to res
-    })); err != nil {
+    if err := redis.ListenAndServe(":6379", redis.HandlerFunc(serve)); err != nil {
         log.Fatal(err)
     }
+}
+
+func serve(res redis.ResponseWriter, req *redis.Request) {
+    // Read the request from req and writes the response to res
+    // ...
 }
 ```
