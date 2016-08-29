@@ -67,10 +67,31 @@ func main() {
     }
 
     // ...
-    res.Args.Close() // will ensure all the stream of the response was consumed
+    res.Args.Close() // will the entire response stream is consumed
 
     // ...
 }
 ```
 
 ### Server
+
+Starting a redis server is similar to using the standard net/http package as
+well, here's a quick example:
+
+```go
+package main
+
+import (
+    "log"
+
+    "github.com/segmentio/redis-go"
+)
+
+func main() {
+    if err := redis.ListenAndServe(":6379", redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
+        // Read the request from req and writes the response to res
+    })); err != nil {
+        log.Fatal(err)
+    }
+}
+```

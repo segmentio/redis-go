@@ -13,6 +13,18 @@ import (
 	"github.com/segmentio/objconv/resp"
 )
 
+// ListenAndServe starts a redis server at addr, using handler to serve the
+// requests.
+//
+// The function returns an error if the server could not be started.
+func ListenAndServe(addr string, handler Handler) error {
+	return (&Server{
+		Network: "tcp",
+		Address: addr,
+		Handler: handler,
+	}).ListenAndServe()
+}
+
 // A Server defines parameters for running an redis server. The zero value for
 // Server is a valid configuration.
 type Server struct {
