@@ -56,7 +56,6 @@ func (res *Response) Write(w io.Writer) (err error) {
 	return objconv.NewEncoder(objconv.EncoderConfig{
 		Output:  w,
 		Emitter: &resp.Emitter{},
-		Tag:     "redis",
 	}).Encode(makeArgsArray(res.Args))
 }
 
@@ -67,7 +66,6 @@ func ReadResponse(r io.Reader, req *Request) (res *Response, err error) {
 		Args: argsDecoder{objconv.NewStreamDecoder(objconv.DecoderConfig{
 			Input:  r,
 			Parser: &resp.Parser{},
-			Tag:    "redis",
 		})},
 		Request: req,
 	}

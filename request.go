@@ -47,7 +47,6 @@ func (req *Request) Write(w io.Writer) (err error) {
 	return objconv.NewEncoder(objconv.EncoderConfig{
 		Output:  w,
 		Emitter: &resp.Emitter{EmitBulkStringsOnly: true},
-		Tag:     "redis",
 	}).Encode(objconv.MultiArray(makeCommandArray(req.Cmd), makeArgsArray(req.Args)))
 }
 
@@ -58,7 +57,6 @@ func ReadRequest(r io.Reader) (req *Request, err error) {
 	dec := objconv.NewStreamDecoder(objconv.DecoderConfig{
 		Input:  r,
 		Parser: &resp.Parser{},
-		Tag:    "redis",
 	})
 
 	if err = dec.Decode(&cmd); err == nil {

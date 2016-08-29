@@ -194,7 +194,6 @@ func (r *responseWriter) WriteLen(n int) {
 	r.s = objconv.NewStreamEncoder(objconv.EncoderConfig{
 		Output:  r.w,
 		Emitter: &resp.Emitter{},
-		Tag:     "redis",
 	})
 	r.err = r.s.Open(n)
 	r.n = n
@@ -221,7 +220,6 @@ func (r *responseWriter) Write(v interface{}) error {
 	r.e = objconv.NewEncoder(objconv.EncoderConfig{
 		Output:  r.w,
 		Emitter: &resp.Emitter{},
-		Tag:     "redis",
 	})
 	r.err = r.e.Encode(v)
 	return r.err
