@@ -47,17 +47,11 @@ func main() {
     defer conn.Close()
 
     // Write pipelined requests.
-    if err = conn.WriteRequest(&redis.Request{
-        Cmd:  "SET",
-        Args: redis.Args("hello", "world"),
-    }); err != nil {
+    if err = conn.WriteRequest(redis.NewRequest("SET", "hello", "world")); err != nil {
         log.Fatal(err)
     }
 
-    if err = conn.WriteRequest(&redis.Request{
-        Cmd:  "SET",
-        Args: redis.Args("question", "answer"),
-    }); err != nil {
+    if err = conn.WriteRequest(redis.NewRequest("GET", "hello")); err != nil {
         log.Fatal(err)
     }
 
