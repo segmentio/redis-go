@@ -43,7 +43,12 @@ func (req *Request) Read() (err error) {
 }
 
 // Write writes the request to w, returning an error if something went wrong.
+//
+// The method automatically closes req.Args.
 func (req *Request) Write(w io.Writer) (err error) {
+	if req.Args != nil {
+		defer req.Args.Close()
+	}
 	return objconv.NewEncoder(objconv.EncoderConfig{
 		Output:  w,
 		Emitter: &resp.Emitter{EmitBulkStringsOnly: true},

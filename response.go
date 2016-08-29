@@ -52,7 +52,12 @@ func (res *Response) Read() (err error) {
 }
 
 // Write writes the response to w, returning an error if something went wrong.
+//
+// The method automatically closes res.Args.
 func (res *Response) Write(w io.Writer) (err error) {
+	if res.Args != nil {
+		defer res.Args.Close()
+	}
 	return objconv.NewEncoder(objconv.EncoderConfig{
 		Output:  w,
 		Emitter: &resp.Emitter{},

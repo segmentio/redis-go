@@ -12,6 +12,10 @@ type Conn interface {
 	net.Conn
 
 	// Flush writes all buffered data to the connection.
+	//
+	// Flushing should be automatic when using WriteRequest, WriteResponse or
+	// WriteMessage, it should only be used when writing bytes directly to the
+	// connection with Write.
 	Flush() error
 
 	// ReadRequest reads a request from the connection.
