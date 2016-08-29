@@ -1,7 +1,6 @@
 package redis
 
 import (
-	"fmt"
 	"io"
 	"reflect"
 
@@ -112,16 +111,6 @@ func (a *args) Read(v interface{}) (err error) {
 	if a.i >= a.n {
 		return io.EOF
 	}
-	defer func() {
-		if x := recover(); x != nil {
-			switch e := x.(type) {
-			case error:
-				err = e
-			default:
-				err = fmt.Errorf("redis: %v", e)
-			}
-		}
-	}()
 	reflect.ValueOf(v).Elem().Set(reflect.ValueOf(a.s[a.i]))
 	a.i++
 	return
