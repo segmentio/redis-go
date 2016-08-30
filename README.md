@@ -61,7 +61,7 @@ func main() {
     }
 
     // ...
-    res.Args.Close() // will the entire response stream is consumed
+    res.Args.Close() // ensure the entire response stream is consumed
 
     // ...
 }
