@@ -9,8 +9,6 @@ dependencies:
     - docker pull segment/golang:latest
 
 test:
-  pre:
-    - which service && sudo service redis stop
   override:
     - >
       docker run
