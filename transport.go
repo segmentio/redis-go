@@ -46,7 +46,7 @@ type RoundTripper interface {
 // A Transport is a low-level primitive for making Redis requests. For high-level
 // functionality, see Client.
 type Transport struct {
-	// DialContext specifies the dial function for creating TCP connections.
+	// DialContext specifies the dial function for creating network connections.
 	// If DialContext is nil, then the transport dials using package net.
 	DialContext func(context.Context, string, string) (net.Conn, error)
 
