@@ -83,7 +83,7 @@ func (req *Request) ParseArgs(dsts ...interface{}) error {
 //
 // If the argument list is not nil, it is closed after being written.
 func (req *Request) Write(w io.Writer) error {
-	var enc = objconv.StreamEncoder{Emitter: resp.NewClientEmitter(w)}
+	enc := objconv.StreamEncoder{Emitter: resp.NewClientEmitter(w)}
 
 	if err := enc.Encode(req.Cmd); err != nil {
 		return err

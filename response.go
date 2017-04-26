@@ -22,7 +22,7 @@ type Response struct {
 //
 // If the argument list is not nil, it is closed after being written.
 func (res *Response) Write(w io.Writer) error {
-	var enc = resp.NewStreamEncoder(w)
+	enc := resp.NewStreamEncoder(w)
 
 	if res.Args != nil {
 		var val interface{}

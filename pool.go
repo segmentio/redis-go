@@ -91,9 +91,7 @@ func dialLoop(txch <-chan connTx, config poolConfig) {
 }
 
 func dial(config poolConfig) (conn, <-chan struct{}, error) {
-	done := make(chan struct{})
 	network, address := splitNetworkAddress(config.addr)
-
 	if len(network) == 0 {
 		network = "tcp"
 	}
@@ -103,6 +101,7 @@ func dial(config poolConfig) (conn, <-chan struct{}, error) {
 		return nil, nil, err
 	}
 
+	done := make(chan struct{})
 	return makeConn(c, done), done, nil
 }
 
