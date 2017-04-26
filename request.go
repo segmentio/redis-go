@@ -41,9 +41,6 @@ func (req *Request) WithContext(ctx context.Context) *Request {
 }
 
 func (req *Request) ParseArgs(values ...interface{}) error {
-	if req.Args == nil {
-		return nil
-	}
 	return ParseArgs(req.Args, values...)
 }
 
