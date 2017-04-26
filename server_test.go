@@ -146,7 +146,7 @@ func TestServer(t *testing.T) {
 				t.Error("invalid stop offset received by the server:", j)
 			}
 
-			res.Stream(3)
+			res.WriteStream(3)
 			res.Write(1)
 			res.Write(2)
 			res.Write(3)
@@ -197,7 +197,7 @@ func TestServer(t *testing.T) {
 			req.Args.Next(&i)
 			req.Args.Next(&j)
 
-			res.Stream(j - i)
+			res.WriteStream(j - i)
 
 			for i != j {
 				i++
@@ -248,6 +248,47 @@ func TestServer(t *testing.T) {
 
 		if err := srv.Shutdown(ctx); err != nil {
 			t.Error(err)
+		}
+	})
+
+	t.Run("hijack connections, ensure that the response writer is unusable afterward", func(t *testing.T) {
+		t.Parallel()
+
+		srv, url := newServer(HandlerFunc(func(res ResponseWriter, req *Request) {
+			conn, _, err := res.(Hijacker).Hijack()
+
+			if err != nil {
+				t.Error("Hijack failed:", err)
+				return
+			}
+
+			if err := res.WriteStream(1); err != errHijacked {
+				t.Error("expected an error on the server after the connection was hijacked but got", err)
+			}
+
+			if err := res.Write(nil); err != errHijacked {
+				t.Error("expected an error on the server after the connection was hijacked but got", err)
+			}
+
+			if err := res.(Flusher).Flush(); err != errHijacked {
+				t.Error("expected an error on the server after the connection was hijacked but got", err)
+			}
+
+			if _, _, err := res.(Hijacker).Hijack(); err != errHijacked {
+				t.Error("expected an error on the server after the connection was hijacked but got", err)
+			}
+
+			conn.Close()
+		}))
+		defer srv.Close()
+
+		tr := &Transport{ConnsPerHost: 2}
+		defer tr.CloseIdleConnections()
+
+		cli := &Client{Address: url, Transport: tr}
+
+		if err := cli.Exec(context.Background(), "SET", "hello", "world"); err == nil {
+			t.Error("expected an error on the client when the connection is hijacked and closed but got <nil>")
 		}
 	})
 }

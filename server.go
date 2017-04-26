@@ -16,13 +16,17 @@ import (
 )
 
 type ResponseWriter interface {
-	Stream(int) error
+	WriteStream(int) error
 
 	Write(interface{}) error
 }
 
 type Flusher interface {
 	Flush() error
+}
+
+type Hijacker interface {
+	Hijack() (net.Conn, *bufio.ReadWriter, error)
 }
 
 type Handler interface {
@@ -225,6 +229,7 @@ func (s *Server) serveRequest(res *responseWriter, req *Request) (err error) {
 	if err == nil {
 		err = res.Flush()
 	}
+
 	return
 }
 
@@ -251,8 +256,10 @@ func (s *Server) writeTimeout() time.Duration {
 }
 
 func (s *Server) log(err error) {
-	if log := s.ErrorLog; log != nil {
-		log.Print(err)
+	if err != errHijacked {
+		if log := s.ErrorLog; log != nil {
+			log.Print(err)
+		}
 	}
 }
 
@@ -434,7 +441,34 @@ type responseWriter struct {
 	timeout time.Duration
 }
 
+func (res *responseWriter) WriteStream(n int) error {
+	if res.conn == nil {
+		return errHijacked
+	}
+
+	if n < 0 {
+		return errNegativeStreamCount
+	}
+
+	switch res.wtype {
+	case oneshot:
+		return errStreamCalledAfterWrite
+	case stream:
+		return errStreamCalledTooManyTimes
+	}
+
+	res.waitReadyWrite()
+	res.wtype = stream
+	res.remain = n
+	res.stream = *resp.NewStreamEncoder(res.conn)
+	return res.stream.Open(n)
+}
+
 func (res *responseWriter) Write(val interface{}) error {
+	if res.conn == nil {
+		return errHijacked
+	}
+
 	if res.wtype == notype {
 		res.waitReadyWrite()
 		res.wtype = oneshot
@@ -454,37 +488,35 @@ func (res *responseWriter) Write(val interface{}) error {
 	return res.stream.Encode(val)
 }
 
-func (res *responseWriter) Stream(n int) error {
-	if n < 0 {
-		return errNegativeStreamCount
-	}
-
-	switch res.wtype {
-	case oneshot:
-		return errStreamCalledAfterWrite
-	case stream:
-		return errStreamCalledTooManyTimes
-	}
-
-	res.waitReadyWrite()
-	res.wtype = stream
-	res.remain = n
-	res.stream = *resp.NewStreamEncoder(res.conn)
-	return res.stream.Open(n)
-}
-
 func (res *responseWriter) Flush() error {
+	if res.conn == nil {
+		return errHijacked
+	}
+
 	if res.wtype == notype {
 		if err := res.Write("OK"); err != nil {
 			return err
 		}
 	}
 
-	if res.remain != 0 && res.wtype == stream {
+	if res.remain != 0 {
 		return errWriteCalledNotEnoughTimes
 	}
 
 	return res.conn.Flush()
+}
+
+func (res *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if res.conn == nil {
+		return nil, nil, errHijacked
+	}
+	nc := res.conn.Conn
+	rw := &bufio.ReadWriter{
+		Reader: &res.conn.r,
+		Writer: &res.conn.w,
+	}
+	res.conn = nil
+	return nc, rw, nil
 }
 
 func (res *responseWriter) waitReadyWrite() {
@@ -498,4 +530,5 @@ var (
 	errStreamCalledTooManyTimes  = errors.New("multiple calls to ResponseWriter.Stream")
 	errWriteCalledTooManyTimes   = errors.New("too many calls to redis.ResponseWriter.Write")
 	errWriteCalledNotEnoughTimes = errors.New("not enough calls to redis.ResponseWriter.Write")
+	errHijacked                  = errors.New("invalid use of a hijacked redis.ResponseWriter")
 )
