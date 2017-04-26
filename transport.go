@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"net"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -106,6 +107,7 @@ func (t *Transport) conn(addr string) conn {
 		if c = t.conns[addr]; c == nil {
 			if t.conns == nil {
 				t.conns = make(map[string]conn)
+				runtime.SetFinalizer(t, (*Transport).CloseIdleConnections)
 			}
 			c = makePool(t.poolConfig(addr))
 			t.conns[addr] = c
