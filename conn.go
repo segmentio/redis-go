@@ -51,6 +51,7 @@ txLoop:
 
 		if err := sendTx(txch2, tx); err != nil {
 			tx.error(err)
+			break txLoop
 		}
 	}
 
@@ -59,8 +60,6 @@ txLoop:
 	for tx := range txch1 {
 		tx.error(io.ErrClosedPipe)
 	}
-
-	conn.Close()
 }
 
 func readLoop(conn net.Conn, txch <-chan connTx, done chan<- struct{}) {
@@ -165,12 +164,6 @@ func (tx *connTx) recv() (res *Response, err error) {
 	}
 	return
 }
-
-type timeout struct{}
-
-func (timeout) Error() string   { return "timeout" }
-func (timeout) Timeout() bool   { return true }
-func (timeout) Temporary() bool { return false }
 
 func contextWithTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	if timeout == 0 {

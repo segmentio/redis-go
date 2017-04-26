@@ -3,7 +3,6 @@ package redis
 import (
 	"io"
 
-	"github.com/segmentio/objconv"
 	"github.com/segmentio/objconv/resp"
 )
 
@@ -35,10 +34,7 @@ func (res *Response) Write(w io.Writer) error {
 
 func newResponse(parser *resp.Parser, req *Request, done chan<- error) *Response {
 	return &Response{
-		Args: &argsReader{
-			dec:  objconv.StreamDecoder{Parser: parser},
-			done: done,
-		},
+		Args:    newArgsReader(parser, done),
 		Request: req,
 	}
 }

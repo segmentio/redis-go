@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -210,34 +211,30 @@ func TestServer(t *testing.T) {
 
 		wg := sync.WaitGroup{}
 
-		for i := 0; i != 10; i++ {
+		tr := &Transport{ConnsPerHost: 2}
+		defer tr.CloseIdleConnections()
+
+		for i := 0; i != 5; i++ {
 			wg.Add(1)
+
 			go func(i int, key string) {
 				defer wg.Done()
 
-				tr := &Transport{
-					ConnsPerHost: 1,
-					PingInterval: 10 * time.Millisecond,
-					PingTimeout:  30 * time.Millisecond,
-				}
-				defer tr.CloseIdleConnections()
-
 				cli := &Client{Address: url, Transport: tr}
 
-				it := cli.Query(ctx, "LRANGE", key, 0, i)
-				time.Sleep(20 * time.Millisecond)
+				it := cli.Query(ctx, "LRANGE-"+strconv.Itoa(i), key, 0, i)
 
 				if n := it.Len(); n != i {
-					t.Error("invalid value count received by the client:", n)
+					t.Error("invalid value count received by the client:", key, n, "!=", i)
 				}
 
 				for j := 0; j != i; j++ {
 					var v int
 					if !it.Next(&v) {
-						t.Error("not enough values read in the response:", j)
+						t.Error("not enough values read in the response:", key, j)
 					}
 					if v != j+1 {
-						t.Error("invalid value received by the client:", v)
+						t.Error("invalid value received by the client:", key, v, "!=", j+1)
 					}
 				}
 

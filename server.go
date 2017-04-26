@@ -2,6 +2,7 @@ package redis
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -124,6 +125,12 @@ func (s *Server) Serve(l net.Listener) error {
 	s.trackListener(l)
 	attempt := 0
 
+	config := serverConfig{
+		idleTimeout:  s.idleTimeout(),
+		readTimeout:  s.readTimeout(),
+		writeTimeout: s.writeTimeout(),
+	}
+
 	for {
 		conn, err := l.Accept()
 
@@ -146,18 +153,15 @@ func (s *Server) Serve(l net.Listener) error {
 		attempt = 0
 		c := newServerConn(conn)
 		s.trackConnection(c)
-		go s.serveConnection(s.context, c)
+		go s.serveConnection(s.context, c, config)
 	}
 }
 
-func (s *Server) serveConnection(ctx context.Context, c *serverConn) {
+func (s *Server) serveConnection(ctx context.Context, c *serverConn, config serverConfig) {
 	defer c.Close()
 	defer s.untrackConnection(c)
 
-	pipeline := &quetex{}
-	idleTimeout := s.idleTimeout()
-	readTimeout := s.readTimeout()
-	writeTimeout := s.writeTimeout()
+	orderedLocks := quetex{}
 
 	for {
 		select {
@@ -166,14 +170,14 @@ func (s *Server) serveConnection(ctx context.Context, c *serverConn) {
 			return
 		}
 
-		if err := c.waitReadyRead(idleTimeout); err != nil {
+		if err := c.waitReadyRead(config.idleTimeout); err != nil {
 			return
 		}
 
-		c.setReadTimeout(readTimeout)
+		c.setReadTimeout(config.readTimeout)
 
 		reqLock := make(chan error, 1)
-		resLock := pipeline.acquire()
+		resLock := orderedLocks.acquire()
 
 		req, err := readRequest(ctx, c, reqLock)
 
@@ -185,7 +189,7 @@ func (s *Server) serveConnection(ctx context.Context, c *serverConn) {
 		res := &responseWriter{
 			conn:    c,
 			lock:    resLock,
-			timeout: writeTimeout,
+			timeout: config.writeTimeout,
 		}
 
 		go func() {
@@ -193,7 +197,7 @@ func (s *Server) serveConnection(ctx context.Context, c *serverConn) {
 				c.Close()
 				s.log(err)
 			}
-			pipeline.release()
+			orderedLocks.release()
 		}()
 
 		if err := <-reqLock; err != nil {
@@ -335,18 +339,27 @@ func defaultDuration(d time.Duration, def time.Duration) time.Duration {
 	return d
 }
 
+type serverConfig struct {
+	idleTimeout  time.Duration
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+}
+
 type serverConn struct {
 	net.Conn
 	r bufio.Reader
 	w bufio.Writer
+	p resp.Parser
 }
 
 func newServerConn(conn net.Conn) *serverConn {
-	return &serverConn{
+	c := &serverConn{
 		Conn: conn,
 		r:    *bufio.NewReader(conn),
 		w:    *bufio.NewWriter(conn),
 	}
+	c.p = *resp.NewParser(&c.r)
+	return c
 }
 
 func (c *serverConn) Read(b []byte) (int, error) {
@@ -361,10 +374,12 @@ func (c *serverConn) Flush() error {
 	return c.w.Flush()
 }
 
-func (c *serverConn) waitReadyRead(timeout time.Duration) error {
-	c.setReadTimeout(timeout)
-	_, err := c.r.Peek(1)
-	return err
+func (c *serverConn) waitReadyRead(timeout time.Duration) (err error) {
+	if br := c.p.Buffered().(*bytes.Reader); br.Len() == 0 {
+		c.setReadTimeout(timeout)
+		_, err = c.r.Peek(1)
+	}
+	return
 }
 
 func (c *serverConn) setReadTimeout(timeout time.Duration) error {
@@ -376,10 +391,7 @@ func (c *serverConn) setWriteTimeout(timeout time.Duration) error {
 }
 
 func readRequest(ctx context.Context, conn *serverConn, done chan<- error) (*Request, error) {
-	args := &argsReader{
-		dec:  *resp.NewStreamDecoder(conn),
-		done: done,
-	}
+	args := newByteArgsReader(&conn.p, done)
 
 	req := &Request{
 		Addr: conn.RemoteAddr().String(),
