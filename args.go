@@ -45,6 +45,7 @@ func (args *argsError) Next(val interface{}) bool { return false }
 
 type argsReader struct {
 	dec  objconv.StreamDecoder
+	err  error
 	once sync.Once
 	done chan<- error
 }
@@ -56,30 +57,48 @@ func newArgsReader(p *resp.Parser, done chan<- error) *argsReader {
 	}
 }
 
-func (args *argsReader) Close() (err error) {
+func (args *argsReader) Close() error {
 	args.once.Do(func() {
 		for args.dec.Decode(nil) == nil {
 			// discard all remaining values
 		}
-		err = args.dec.Err()
+
+		err := args.dec.Err()
 		args.done <- err
+
+		if args.err == nil {
+			args.err = err
+		}
 	})
-	return
+	return args.err
 }
 
 func (args *argsReader) Len() int {
+	if args.err != nil {
+		return 0
+	}
 	return args.dec.Len()
 }
 
 func (args *argsReader) Next(val interface{}) bool {
+	if args.err != nil {
+		return false
+	}
+
+	if args.dec.Len() != 0 {
+		if t, _ := args.dec.Parser.ParseType(); t == objconv.Error {
+			args.dec.Decode(&args.err)
+			return false
+		}
+	}
+
 	return args.dec.Decode(val) == nil
 }
 
 type byteArgsReader struct {
 	argsReader
-	err error
-	b   []byte
-	a   [128]byte
+	b []byte
+	a [128]byte
 }
 
 func newByteArgsReader(p *resp.Parser, done chan<- error) *byteArgsReader {
@@ -88,34 +107,22 @@ func newByteArgsReader(p *resp.Parser, done chan<- error) *byteArgsReader {
 	}
 }
 
-func (args *byteArgsReader) Close() error {
-	err := args.argsReader.Close()
-	if args.err != nil {
-		err = args.err
-	}
-	return err
-}
-
-func (args *byteArgsReader) Next(val interface{}) bool {
-	if args.err != nil {
-		return false
-	}
-
+func (args *byteArgsReader) Next(val interface{}) (ok bool) {
 	if args.b == nil {
 		args.b = args.a[:0]
 	} else {
 		args.b = args.b[:0]
 	}
 
-	ok := args.argsReader.Next(&args.b)
-
-	if v := reflect.ValueOf(val); ok && v.IsValid() {
-		if err := args.parse(v.Elem()); err != nil {
-			args.err, ok = err, false
+	if ok = args.argsReader.Next(&args.b); ok {
+		if v := reflect.ValueOf(val); v.IsValid() {
+			if err := args.parse(v.Elem()); err != nil {
+				args.err, ok = err, false
+			}
 		}
 	}
 
-	return ok
+	return
 }
 
 func (args *byteArgsReader) parse(v reflect.Value) error {

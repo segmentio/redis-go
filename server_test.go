@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/segmentio/objconv/resp"
 )
 
 func TestServer(t *testing.T) {
@@ -289,6 +291,32 @@ func TestServer(t *testing.T) {
 
 		if err := cli.Exec(context.Background(), "SET", "hello", "world"); err == nil {
 			t.Error("expected an error on the client when the connection is hijacked and closed but got <nil>")
+		}
+	})
+
+	t.Run("return a redis protocol error", func(t *testing.T) {
+		t.Parallel()
+
+		respErr := resp.NewError("ERR something went wrong")
+
+		srv, url := newServer(HandlerFunc(func(res ResponseWriter, req *Request) {
+			res.Write(respErr)
+		}))
+		defer srv.Close()
+
+		tr := &Transport{ConnsPerHost: 1}
+		defer tr.CloseIdleConnections()
+
+		cli := &Client{Address: url, Transport: tr}
+
+		if err := cli.Exec(context.Background(), "SET", "hello", "world"); err == nil {
+			t.Error("expected a redis protocol error but got <nil>")
+
+		} else if e, ok := err.(*resp.Error); !ok {
+			t.Error("unexpected error type:", err)
+
+		} else if s := e.Error(); s != respErr.Error() {
+			t.Error("unexpected error string:", s)
 		}
 	})
 }
