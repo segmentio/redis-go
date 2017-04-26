@@ -198,21 +198,21 @@ func (args *byteArgsReader) parseBytes(v reflect.Value) error {
 }
 
 func Int(args Args) (i int, err error) {
-	err = Load(args, &i)
+	err = ParseArgs(args, &i)
 	return
 }
 
 func Int64(args Args) (i int64, err error) {
-	err = Load(args, &i)
+	err = ParseArgs(args, &i)
 	return
 }
 
 func String(args Args) (s string, err error) {
-	err = Load(args, &s)
+	err = ParseArgs(args, &s)
 	return
 }
 
-func Load(args Args, values ...interface{}) error {
+func ParseArgs(args Args, values ...interface{}) error {
 	for _, val := range values {
 		if !args.Next(val) {
 			break

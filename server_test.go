@@ -83,10 +83,7 @@ func TestServer(t *testing.T) {
 
 			var k string
 			var v string
-
-			req.Args.Next(&k)
-			req.Args.Next(&v)
-			req.Args.Close()
+			req.ParseArgs(&k, &v)
 
 			if k != key {
 				t.Error("invalid key received by the server:", k)
@@ -130,11 +127,7 @@ func TestServer(t *testing.T) {
 			var k string
 			var i int
 			var j int
-
-			req.Args.Next(&k)
-			req.Args.Next(&i)
-			req.Args.Next(&j)
-			req.Args.Close()
+			req.ParseArgs(&k, &i, &j)
 
 			if k != key {
 				t.Error("invalid key received by the server:", k)
@@ -194,10 +187,7 @@ func TestServer(t *testing.T) {
 		srv, url := newServer(HandlerFunc(func(res ResponseWriter, req *Request) {
 			var i int
 			var j int
-
-			req.Args.Next(nil)
-			req.Args.Next(&i)
-			req.Args.Next(&j)
+			req.ParseArgs(nil, &i, &j)
 
 			res.WriteStream(j - i)
 
