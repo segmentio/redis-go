@@ -66,8 +66,8 @@ func (c *Client) Do(req *Request) (*Response, error) {
 // An error is returned if the request couldn't be sent or if the command was
 // refused by the Redis server.
 //
-// The context passed as first argument allows the operation to be asynchrnously
-// canceled.
+// The context passed as first argument allows the operation to be canceled
+// asynchronously.
 func (c *Client) Exec(ctx context.Context, cmd string, args ...interface{}) error {
 	return ParseArgs(c.Query(ctx, cmd, args...), nil)
 }
@@ -78,8 +78,8 @@ func (c *Client) Exec(ctx context.Context, cmd string, args ...interface{}) erro
 // Any error occuring while querying the Redis server will be returned by the
 // Args.Close method of the returned value.
 //
-// The context passed as first argument allows the operation to be asynchrnously
-// canceled.
+// The context passed as first argument allows the operation to be canceled
+// asynchronously.
 func (c *Client) Query(ctx context.Context, cmd string, args ...interface{}) Args {
 	addr := c.Addr
 	if len(addr) == 0 {
