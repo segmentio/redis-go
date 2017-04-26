@@ -133,11 +133,7 @@ func (t *Transport) poolConfig(addr string) poolConfig {
 	}
 
 	if config.dialContext == nil {
-		config.dialContext = (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-			DualStack: true,
-		}).DialContext
+		config.dialContext = DefaultDialer.DialContext
 	}
 
 	if config.pingTimeout == 0 {
@@ -155,12 +151,15 @@ func (t *Transport) poolConfig(addr string) poolConfig {
 // DefaultClient. It establishes network connections as needed and caches them
 // for reuse by subsequent calls.
 var DefaultTransport RoundTripper = &Transport{
-	DialContext: (&net.Dialer{
-		Timeout:   10 * time.Second,
-		KeepAlive: 30 * time.Second,
-		DualStack: true,
-	}).DialContext,
 	ConnsPerHost: 4,
 	PingTimeout:  10 * time.Second,
 	PingInterval: 15 * time.Second,
+}
+
+// DefaultDialer is the default dialer used by Transports when no DialContext
+// is set.
+var DefaultDialer = &net.Dialer{
+	Timeout:   10 * time.Second,
+	KeepAlive: 30 * time.Second,
+	DualStack: true,
 }
