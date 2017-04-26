@@ -15,41 +15,100 @@ import (
 	"github.com/segmentio/objconv/resp"
 )
 
+// A ResponseWriter interface is used by a Redis handler to construct an Redis
+// response.
+//
+// A ResponseWriter may not be used after the Handler.ServeRedis method has
+// returned.
 type ResponseWriter interface {
-	WriteStream(int) error
+	// WriteStream is called if the server handler is going to produce a list of
+	// values by calling Write repeatidly n times.
+	//
+	// The method cannot be called more than once, or after Write was called.
+	WriteStream(n int) error
 
-	Write(interface{}) error
+	// Write is called by the server handler to send values back to the client.
+	//
+	// Write may not be called more than once, or more than n times, when n is
+	// passed to a previous call to WriteStream.
+	Write(v interface{}) error
 }
 
+// The Flusher interface is implemented by ResponseWriters that allow a Redis
+// handler to flush buffered data to the client.
 type Flusher interface {
+	// Flush sends any buffered data to the client.
 	Flush() error
 }
 
+// The Hijacker interface is implemented by ResponseWriters that allow a Redis
+// handler to take over the connection.
 type Hijacker interface {
+	// Hijack lets the caller take over the connection. After a call to Hijack
+	// the Redis server library will not do anything else with the connection.
+	//
+	// It becomes the caller's responsibility to manage and close the
+	// connection.
+	//
+	// The returned net.Conn may have read or write deadlines already set,
+	// depending on the configuration of the Server. It is the caller's
+	// responsibility to set or clear those deadlines as needed.
+	//
+	// The returned bufio.Reader may contain unprocessed buffered data from the
+	// client.
 	Hijack() (net.Conn, *bufio.ReadWriter, error)
 }
 
+// A Handler responds to a Redis request.
+//
+// ServeRedis should write reply headers and data to the ResponseWriter and then
+// return. Returning signals that the request is finished; it is not valid to
+// use the ResponseWriter or read from the Request.Args after or concurrently with
+// the completion of the ServeRedis call.
+//
+// Except for reading the argument list, handlers should not modify the provided
+// Request.
 type Handler interface {
+	// ServeRedis is called by a Redis server to handle requests.
 	ServeRedis(ResponseWriter, *Request)
 }
 
+// The HandlerFunc type is an adapter to allow the use of ordinary functions as
+// Redis handlers. If f is a function with the appropriate signature.
 type HandlerFunc func(ResponseWriter, *Request)
 
+// ServeRedis implements the Handler interface, calling f.
 func (f HandlerFunc) ServeRedis(res ResponseWriter, req *Request) {
 	f(res, req)
 }
 
+// A Server defines parameters for running a Redis server.
 type Server struct {
+	// The address to listen on, ":6379" if empty.
+	//
+	// The address may be prefixed with "tcp://" or "unix://" to specify the
+	// type of network to listen on.
 	Addr string
 
+	// Handler invoked to handle Redis requests, must not be nil.
 	Handler Handler
 
+	// ReadTimeout is the maximum duration for reading the entire request,
+	// including the reading the argument list.
 	ReadTimeout time.Duration
 
+	// WriteTimeout is the maximum duration before timing out writes of the
+	// response. It is reset whenever a new request is read.
 	WriteTimeout time.Duration
 
+	// IdleTimeout is the maximum amount of time to wait for the next request.
+	// If IdleTimeout is zero, the value of ReadTimeout is used. If both are
+	// zero, there is no timeout.
 	IdleTimeout time.Duration
 
+	// ErrorLog specifies an optional logger for errors accepting connections
+	// and unexpected behavior from handlers. If nil, logging goes to os.Stderr
+	// via the log package's standard logger.
 	ErrorLog *log.Logger
 
 	mutex       sync.Mutex
@@ -59,9 +118,16 @@ type Server struct {
 	shutdown    context.CancelFunc
 }
 
+// ListenAndServe listens on the network address s.Addr and then calls Serve to
+// handle requests on incoming connections. If s.Addr is blank, ":6379" is used.
+// ListenAndServe always returns a non-nil error.
 func (s *Server) ListenAndServe() error {
-	network, address := splitNetworkAddress(s.Addr)
+	addr := s.Addr
+	if len(addr) == 0 {
+		addr = ":6379"
+	}
 
+	network, address := splitNetworkAddress(addr)
 	if len(network) == 0 {
 		network = "tcp"
 	}
@@ -74,7 +140,10 @@ func (s *Server) ListenAndServe() error {
 	return s.Serve(l)
 }
 
+// Close immediately closes all active net.Listeners and any connections.
+// For a graceful shutdown, use Shutdown.
 func (s *Server) Close() error {
+	var err error
 	s.mutex.Lock()
 
 	if s.shutdown != nil {
@@ -82,7 +151,9 @@ func (s *Server) Close() error {
 	}
 
 	for l := range s.listeners {
-		l.Close()
+		if cerr := l.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
 	}
 
 	for c := range s.connections {
@@ -90,9 +161,14 @@ func (s *Server) Close() error {
 	}
 
 	s.mutex.Unlock()
-	return nil
+	return err
 }
 
+// Shutdown gracefully shuts down the server without interrupting any active
+// connections. Shutdown works by first closing all open listeners, then closing
+// all idle connections, and then waiting indefinitely for connections to return
+// to idle and then shut down. If the provided context expires before the shutdown
+// is complete, then the context's error is returned.
 func (s *Server) Shutdown(ctx context.Context) error {
 	const maxPollInterval = 500 * time.Millisecond
 	const minPollInterval = 10 * time.Millisecond
@@ -119,6 +195,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// Serve accepts incoming connections on the Listener l, creating a new service
+// goroutine for each. The service goroutines read requests and then call
+// s.Handler to reply to them.
+//
+// Serve always returns a non-nil error. After Shutdown or Close, the returned
+// error is ErrServerClosed.
 func (s *Server) Serve(l net.Listener) error {
 	const maxBackoffDelay = 1 * time.Second
 	const minBackoffDelay = 10 * time.Millisecond
@@ -130,15 +212,24 @@ func (s *Server) Serve(l net.Listener) error {
 	attempt := 0
 
 	config := serverConfig{
-		idleTimeout:  s.idleTimeout(),
-		readTimeout:  s.readTimeout(),
-		writeTimeout: s.writeTimeout(),
+		idleTimeout:  s.IdleTimeout,
+		readTimeout:  s.ReadTimeout,
+		writeTimeout: s.WriteTimeout,
+	}
+
+	if config.idleTimeout == 0 {
+		config.idleTimeout = config.readTimeout
 	}
 
 	for {
 		conn, err := l.Accept()
 
 		if err != nil {
+			select {
+			default:
+			case <-s.context.Done():
+				return ErrServerClosed
+			}
 			switch {
 			case isTimeout(err):
 				continue
@@ -162,6 +253,8 @@ func (s *Server) Serve(l net.Listener) error {
 }
 
 func (s *Server) serveConnection(ctx context.Context, c *serverConn, config serverConfig) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	defer c.Close()
 	defer s.untrackConnection(c)
 
@@ -217,8 +310,7 @@ func (s *Server) serveRequest(res *responseWriter, req *Request) (err error) {
 	switch req.Cmd {
 	case "PING":
 		msg := "PONG"
-		args.Next(&msg)
-		args.Close()
+		req.ParseArgs(&msg)
 		res.Write(msg)
 
 	default:
@@ -234,32 +326,25 @@ func (s *Server) serveRequest(res *responseWriter, req *Request) (err error) {
 }
 
 func (s *Server) serveRedis(res ResponseWriter, req *Request) (err error) {
+	ctx, cancel := context.WithCancel(req.ctx)
 	defer func() {
+		cancel()
 		if v := recover(); v != nil {
 			err = convertPanicToError(v)
 		}
 	}()
+	req.ctx = ctx
 	s.Handler.ServeRedis(res, req)
 	return
 }
 
-func (s *Server) idleTimeout() time.Duration {
-	return defaultDuration(s.IdleTimeout, 20*time.Second)
-}
-
-func (s *Server) readTimeout() time.Duration {
-	return defaultDuration(s.ReadTimeout, 10*time.Second)
-}
-
-func (s *Server) writeTimeout() time.Duration {
-	return defaultDuration(s.WriteTimeout, 10*time.Second)
-}
-
 func (s *Server) log(err error) {
 	if err != errHijacked {
-		if log := s.ErrorLog; log != nil {
-			log.Print(err)
+		print := log.Print
+		if logger := s.ErrorLog; logger != nil {
+			print = logger.Print
 		}
+		print(err)
 	}
 }
 
@@ -305,10 +390,19 @@ func (s *Server) numberOfActors() int {
 	return n
 }
 
+// ListenAndServe listens on the network address addr and then calls Serve with
+// handler to handle requests on incoming connections.
+//
+// ListenAndServe always returns a non-nil error.
 func ListenAndServe(addr string, handler Handler) error {
 	return (&Server{Addr: addr, Handler: handler}).ListenAndServe()
 }
 
+// Serve accepts incoming Redis connections on the listener l, creating a new
+// service goroutine for each. The service goroutines read requests and then
+// call handler to reply to them.
+//
+// Serve always returns a non-nil error.
 func Serve(l net.Listener, handler Handler) error {
 	return (&Server{Handler: handler}).Serve(l)
 }
@@ -335,13 +429,6 @@ func backoff(attempt int, minDelay time.Duration, maxDelay time.Duration) time.D
 	d := time.Duration(attempt*attempt) * minDelay
 	if d > maxDelay {
 		d = maxDelay
-	}
-	return d
-}
-
-func defaultDuration(d time.Duration, def time.Duration) time.Duration {
-	if d == 0 {
-		d = def
 	}
 	return d
 }
@@ -390,11 +477,18 @@ func (c *serverConn) waitReadyRead(timeout time.Duration) (err error) {
 }
 
 func (c *serverConn) setReadTimeout(timeout time.Duration) error {
-	return c.SetReadDeadline(time.Now().Add(timeout))
+	return c.SetReadDeadline(deadline(timeout))
 }
 
 func (c *serverConn) setWriteTimeout(timeout time.Duration) error {
-	return c.SetWriteDeadline(time.Now().Add(timeout))
+	return c.SetWriteDeadline(deadline(timeout))
+}
+
+func deadline(timeout time.Duration) time.Time {
+	if timeout == 0 {
+		return time.Time{}
+	}
+	return time.Now().Add(timeout)
 }
 
 func readRequest(ctx context.Context, conn *serverConn, done chan<- error) (*Request, error) {
@@ -523,6 +617,11 @@ func (res *responseWriter) waitReadyWrite() {
 	<-res.lock
 	res.conn.setWriteTimeout(res.timeout)
 }
+
+var (
+	// ErrServerClosed is returned by Server.Serve when the server is closed.
+	ErrServerClosed = errors.New("redis: Server closed")
+)
 
 var (
 	errNegativeStreamCount       = errors.New("invalid call to redis.ResponseWriter.Stream with a negative value")

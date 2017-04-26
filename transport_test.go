@@ -13,7 +13,9 @@ func TestTransport(t *testing.T) {
 
 		var transport Transport
 
-		if res, err := transport.RoundTrip(NewRequest("localhost:6379", "SET", "redis-go.test.transport.CloseIdleConnections", "0123456789")); err != nil {
+		if res, err := transport.RoundTrip(
+			NewRequest("localhost:6379", "SET", List("redis-go.test.transport.CloseIdleConnections", "0123456789")),
+		); err != nil {
 			t.Error(err)
 		} else {
 			res.Args.Close()
@@ -39,7 +41,7 @@ func TestTransport(t *testing.T) {
 				var key = fmt.Sprintf("redis-go.test.transport.RoundTrip-%02d", i)
 				var val = fmt.Sprintf("%02d", i)
 
-				if res, err = transport.RoundTrip(NewRequest("localhost:6379", "SET", key, val)); err != nil {
+				if res, err = transport.RoundTrip(NewRequest("localhost:6379", "SET", List(key, val))); err != nil {
 					t.Error(err)
 					return
 				}
@@ -49,7 +51,7 @@ func TestTransport(t *testing.T) {
 					return
 				}
 
-				if res, err = transport.RoundTrip(NewRequest("localhost:6379", "GET", key)); err != nil {
+				if res, err = transport.RoundTrip(NewRequest("localhost:6379", "GET", List(key))); err != nil {
 					t.Error(err)
 					return
 				}
@@ -81,7 +83,9 @@ func TestTransport(t *testing.T) {
 			PingTimeout:  1 * time.Second,
 		}
 
-		if res, err := transport.RoundTrip(NewRequest("localhost:6379", "SET", "redis-go.test.transport.KeepAlive", "0123456789")); err != nil {
+		if res, err := transport.RoundTrip(
+			NewRequest("localhost:6379", "SET", List("redis-go.test.transport.KeepAlive", "0123456789")),
+		); err != nil {
 			t.Error(err)
 		} else {
 			res.Args.Close()

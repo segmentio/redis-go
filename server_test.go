@@ -100,7 +100,7 @@ func TestServer(t *testing.T) {
 		tr := &Transport{}
 		defer tr.CloseIdleConnections()
 
-		cli := &Client{Address: url, Transport: tr}
+		cli := &Client{Addr: url, Transport: tr}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -151,7 +151,7 @@ func TestServer(t *testing.T) {
 		tr := &Transport{}
 		defer tr.CloseIdleConnections()
 
-		cli := &Client{Address: url, Transport: tr}
+		cli := &Client{Addr: url, Transport: tr}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -212,7 +212,7 @@ func TestServer(t *testing.T) {
 			go func(i int, key string) {
 				defer wg.Done()
 
-				cli := &Client{Address: url, Transport: tr}
+				cli := &Client{Addr: url, Transport: tr}
 
 				it := cli.Query(ctx, "LRANGE-"+strconv.Itoa(i), key, 0, i)
 
@@ -277,7 +277,7 @@ func TestServer(t *testing.T) {
 		tr := &Transport{ConnsPerHost: 2}
 		defer tr.CloseIdleConnections()
 
-		cli := &Client{Address: url, Transport: tr}
+		cli := &Client{Addr: url, Transport: tr}
 
 		if err := cli.Exec(context.Background(), "SET", "hello", "world"); err == nil {
 			t.Error("expected an error on the client when the connection is hijacked and closed but got <nil>")
@@ -297,7 +297,7 @@ func TestServer(t *testing.T) {
 		tr := &Transport{ConnsPerHost: 1}
 		defer tr.CloseIdleConnections()
 
-		cli := &Client{Address: url, Transport: tr}
+		cli := &Client{Addr: url, Transport: tr}
 
 		if err := cli.Exec(context.Background(), "SET", "hello", "world"); err == nil {
 			t.Error("expected a redis protocol error but got <nil>")

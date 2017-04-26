@@ -11,14 +11,27 @@ import (
 	"github.com/segmentio/objconv/resp"
 )
 
+// Args represents a list of arguments in Redis requests and responses.
+//
+// Args is an interface because there are multiple implementations that
+// load values from memory, or from network connections. Using an interface
+// allows the code consuming the list of arguments to be agnostic of the actual
+// source from which the values are read.
 type Args interface {
+	// Close closes the argument list, returning any error that occured while
+	// reading the values.
 	Close() error
 
+	// Len returns the number of values remaining to be read from this argument
+	// list.
 	Len() int
 
-	Next(interface{}) bool
+	// Next reads the next value from the argument list into dst, which must be
+	// a pointer.
+	Next(dst interface{}) bool
 }
 
+// List creates an argument list from a sequence of values.
 func List(args ...interface{}) Args {
 	list := make([]interface{}, len(args))
 	copy(list, args)
@@ -27,6 +40,38 @@ func List(args ...interface{}) Args {
 			Parser: objconv.NewValueParser(list),
 		},
 	}
+}
+
+// Int parses an integer value from the list of arguments and closes it,
+// returning an error if no integer could not be read.
+func Int(args Args) (i int, err error) {
+	err = ParseArgs(args, &i)
+	return
+}
+
+// Int64 parses a 64 bits integer value from the list of arguments and closes
+// it, returning an error if no integer could not be read.
+func Int64(args Args) (i int64, err error) {
+	err = ParseArgs(args, &i)
+	return
+}
+
+// String parses a string value from the list of arguments and closes it,
+// returning an error if no string could not be read.
+func String(args Args) (s string, err error) {
+	err = ParseArgs(args, &s)
+	return
+}
+
+// ParseArgs reads a list of arguments into a sequence of destination pointers
+// and closes it, returning any error that occurred while parsing the values.
+func ParseArgs(args Args, dsts ...interface{}) error {
+	for _, dst := range dsts {
+		if !args.Next(dst) {
+			break
+		}
+	}
+	return args.Close()
 }
 
 type argsError struct {
@@ -64,7 +109,10 @@ func (args *argsReader) Close() error {
 		}
 
 		err := args.dec.Err()
-		args.done <- err
+
+		if args.done != nil {
+			args.done <- err
+		}
 
 		if args.err == nil {
 			args.err = err
@@ -195,28 +243,4 @@ func (args *byteArgsReader) parseString(v reflect.Value) error {
 func (args *byteArgsReader) parseBytes(v reflect.Value) error {
 	v.SetBytes(append(v.Bytes()[:0], args.b...))
 	return nil
-}
-
-func Int(args Args) (i int, err error) {
-	err = ParseArgs(args, &i)
-	return
-}
-
-func Int64(args Args) (i int64, err error) {
-	err = ParseArgs(args, &i)
-	return
-}
-
-func String(args Args) (s string, err error) {
-	err = ParseArgs(args, &s)
-	return
-}
-
-func ParseArgs(args Args, values ...interface{}) error {
-	for _, val := range values {
-		if !args.Next(val) {
-			break
-		}
-	}
-	return args.Close()
 }
