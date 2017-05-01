@@ -326,14 +326,14 @@ func (s *Server) serveRequest(res *responseWriter, req *Request) (err error) {
 }
 
 func (s *Server) serveRedis(res ResponseWriter, req *Request) (err error) {
-	ctx, cancel := context.WithCancel(req.ctx)
+	ctx, cancel := context.WithCancel(req.Context)
 	defer func() {
 		cancel()
 		if v := recover(); v != nil {
 			err = convertPanicToError(v)
 		}
 	}()
-	req.ctx = ctx
+	req.Context = ctx
 	s.Handler.ServeRedis(res, req)
 	return
 }
@@ -495,9 +495,9 @@ func readRequest(ctx context.Context, conn *serverConn, done chan<- error) (*Req
 	args := newByteArgsReader(&conn.p, done)
 
 	req := &Request{
-		Addr: conn.RemoteAddr().String(),
-		Args: args,
-		ctx:  ctx,
+		Addr:    conn.RemoteAddr().String(),
+		Args:    args,
+		Context: ctx,
 	}
 
 	if !args.Next(&req.Cmd) {

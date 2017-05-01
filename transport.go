@@ -87,7 +87,13 @@ func (t *Transport) CloseIdleConnections() {
 //
 // For higher-level Redis client support, see Exec, Query, and the Client type.
 func (t *Transport) RoundTrip(req *Request) (*Response, error) {
-	tx := makeConnTx(req.Context(), req)
+	ctx := req.Context
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	tx := makeConnTx(ctx, req)
 
 	if err := t.conn(req.Addr).send(tx); err != nil {
 		return nil, err

@@ -52,9 +52,15 @@ func (c *Client) Do(req *Request) (*Response, error) {
 	}
 
 	if c.Timeout != 0 {
-		ctx, cancel := context.WithTimeout(req.Context(), c.Timeout)
+		var ctx = req.Context
+		var cancel context.CancelFunc
+
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		req.Context, cancel = context.WithTimeout(ctx, c.Timeout)
 		defer cancel()
-		req.ctx = ctx
 	}
 
 	return transport.RoundTrip(req)
@@ -86,7 +92,12 @@ func (c *Client) Query(ctx context.Context, cmd string, args ...interface{}) Arg
 		addr = "localhost:6379"
 	}
 
-	r, err := c.Do(NewRequest(addr, cmd, List(args...)).WithContext(ctx))
+	r, err := c.Do(&Request{
+		Addr:    addr,
+		Cmd:     cmd,
+		Args:    List(args...),
+		Context: ctx,
+	})
 	if err != nil {
 		return newArgsError(err)
 	}

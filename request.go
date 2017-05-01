@@ -34,7 +34,9 @@ type Request struct {
 	// the argument list.
 	Args Args
 
-	ctx context.Context
+	// If not nil, this context is used to control asynchronous cancellation of
+	// the request when it is passed to a RoundTripper.
+	Context context.Context
 }
 
 // NewRequest returns a new Request, given an address, command, and list of
@@ -45,32 +47,6 @@ func NewRequest(addr string, cmd string, args Args) *Request {
 		Cmd:  cmd,
 		Args: args,
 	}
-}
-
-// Context returns the request's context. To change the context,
-// use WithContext.
-//
-// The returned context is always non-nil; it defaults to the background
-// context.
-//
-// For outgoing client requests, the context controls cancelation.
-//
-// For incoming server requests, the context is canceled when the client's
-// connection closes, or when the ServeRedis method returns.
-func (req *Request) Context() context.Context {
-	ctx := req.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return ctx
-}
-
-// WithContext returns a shallow copy of r with its context changed to ctx.
-// The provided ctx must be non-nil.
-func (req *Request) WithContext(ctx context.Context) *Request {
-	r := *req
-	r.ctx = ctx
-	return &r
 }
 
 // ParseArgs parses the list of arguments from the request into the destination
