@@ -22,7 +22,7 @@ import (
 // returned.
 type ResponseWriter interface {
 	// WriteStream is called if the server handler is going to produce a list of
-	// values by calling Write repeatidly n times.
+	// values by calling Write repeatedly n times.
 	//
 	// The method cannot be called more than once, or after Write was called.
 	WriteStream(n int) error

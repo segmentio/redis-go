@@ -81,7 +81,7 @@ func (c *Client) Exec(ctx context.Context, cmd string, args ...interface{}) erro
 // Query issues a request with cmd and args to the Redis server at the address
 // set on the client, returning the response's Args (which is never nil).
 //
-// Any error occuring while querying the Redis server will be returned by the
+// Any error occurring while querying the Redis server will be returned by the
 // Args.Close method of the returned value.
 //
 // The context passed as first argument allows the operation to be canceled
