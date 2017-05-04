@@ -61,10 +61,6 @@ func main() {
 package main
 
 import (
-    "context"
-    "fmt"
-    "time"
-
     "github.com/segmentio/redis-go"
 )
 
