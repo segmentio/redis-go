@@ -18,7 +18,7 @@ import (
 // allows the code consuming the list of arguments to be agnostic of the actual
 // source from which the values are read.
 type Args interface {
-	// Close closes the argument list, returning any error that occured while
+	// Close closes the argument list, returning any error that occurred while
 	// reading the values.
 	Close() error
 
