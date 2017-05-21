@@ -42,7 +42,7 @@ func (proxy *ReverseProxy) ServeRedis(w ResponseWriter, r *Request) {
 			return
 		}
 
-		proxy.servePubSub(conn, rw, req.Cmd, channels...)
+		proxy.servePubSub(conn, rw, r.Cmd, channels...)
 		// TOD: figure out a way to pass the connection back in regular mode
 		return
 	}
@@ -78,7 +78,7 @@ func (proxy *ReverseProxy) log(err error) {
 	print(err)
 }
 
-func (proxy *ReverseProxy) transport() *Transport {
+func (proxy *ReverseProxy) transport() RoundTripper {
 	if transport := proxy.Transport; transport != nil {
 		return transport
 	}
