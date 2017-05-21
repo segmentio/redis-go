@@ -106,7 +106,7 @@ func (t *Transport) sub(ctx context.Context, network string, address string, com
 		defer cancel()
 	}
 
-	c, err := t.dialContext()(ctx, network, address)
+	conn, err := t.dialContext()(ctx, network, address)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (t *Transport) sub(ctx context.Context, network string, address string, com
 	errch := make(chan error, 1)
 
 	go func() {
-		sub := NewSubConn(c)
+		sub := NewSubConn(conn)
 		sub.SetWriteDeadline(deadline)
 
 		if err := sub.WriteCommand(command, channels...); err != nil {
@@ -136,7 +136,7 @@ func (t *Transport) sub(ctx context.Context, network string, address string, com
 		return nil, err
 
 	case <-ctx.Done():
-		c.Close()
+		conn.Close()
 		return nil, ctx.Err()
 	}
 }

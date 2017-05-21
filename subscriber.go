@@ -79,19 +79,36 @@ func (sub *SubConn) WriteCommand(command string, channels ...string) (err error)
 // The program is expected to call ReadMessage in a loop to consume messages
 // from the PUB/SUB channels that the connection was subscribed to.
 func (sub *SubConn) ReadMessage() (channel string, message []byte, err error) {
+	defer func() {
+		if err != nil {
+			sub.conn.Close()
+		}
+	}()
+
 	defer sub.rmtx.Unlock()
 	sub.rmtx.Lock()
 
 	for {
-		args := make([][]byte, 0, 3)
+		var args []interface{}
 
 		if err = sub.dec.Decode(&args); err != nil {
-			sub.conn.Close()
 			return
 		}
 
-		if len(args) == 3 && string(args[0]) == "message" {
-			channel, message = string(args[1]), args[2]
+		if len(args) != 3 {
+			continue
+		}
+
+		arg0, _ := args[0].([]byte)
+		arg1, _ := args[1].([]byte)
+		arg2, _ := args[2].([]byte)
+
+		if arg0 == nil || arg1 == nil || arg2 == nil {
+			continue
+		}
+
+		if string(arg0) == "message" {
+			channel, message = string(arg1), arg2
 			return
 		}
 	}
