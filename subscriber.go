@@ -46,15 +46,15 @@ func (sub *SubConn) WriteCommand(command string, channels ...string) (err error)
 		return
 	}
 
-	defer sub.wmtx.Unlock()
-	sub.wmtx.Lock()
-
 	args := make([][]byte, 0, 1+len(channels))
 	args = append(args, []byte(command))
 
 	for _, channel := range channels {
 		args = append(args, []byte(channel))
 	}
+
+	defer sub.wmtx.Unlock()
+	sub.wmtx.Lock()
 
 	if err = sub.enc.Encode(args); err != nil {
 		// We can't tell anymore if the connection is in a recoverable state,
