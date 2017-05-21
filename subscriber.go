@@ -59,7 +59,7 @@ func (sub *SubConn) WriteCommand(command string, channels ...string) (err error)
 	if err = sub.enc.Encode(args); err != nil {
 		// We can't tell anymore if the connection is in a recoverable state,
 		// we're better off closing it at this point.
-		sub.Close()
+		sub.conn.Close()
 		return
 	}
 
@@ -79,12 +79,6 @@ func (sub *SubConn) WriteCommand(command string, channels ...string) (err error)
 // The program is expected to call ReadMessage in a loop to consume messages
 // from the PUB/SUB channels that the connection was subscribed to.
 func (sub *SubConn) ReadMessage() (channel string, message []byte, err error) {
-	defer func() {
-		if err != nil {
-			sub.conn.Close()
-		}
-	}()
-
 	defer sub.rmtx.Unlock()
 	sub.rmtx.Lock()
 
@@ -92,6 +86,7 @@ func (sub *SubConn) ReadMessage() (channel string, message []byte, err error) {
 		var args []interface{}
 
 		if err = sub.dec.Decode(&args); err != nil {
+			sub.conn.Close()
 			return
 		}
 
