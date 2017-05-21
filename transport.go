@@ -83,6 +83,64 @@ func (t *Transport) CloseIdleConnections() {
 	}
 }
 
+// Subscribe uses the transport's configuration to open a connection to a redis
+// server that subscrribes to the given channels.
+func (t *Transport) Subscribe(ctx context.Context, network string, address string, channels ...string) (*SubConn, error) {
+	return t.sub(ctx, network, address, "SUBSCRIBE", channels...)
+}
+
+// Subscribe uses the transport's configuration to open a connection to a redis
+// server that subscrribes to the given patterns.
+func (t *Transport) PSubscribe(ctx context.Context, network string, address string, patterns ...string) (*SubConn, error) {
+	return t.sub(ctx, network, address, "PSUBSCRIBE", patterns...)
+}
+
+func (t *Transport) sub(ctx context.Context, network string, address string, command string, channels ...string) (*SubConn, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		var cancel context.CancelFunc
+		// Assuming the ping timeout should be a good enough approximation of
+		// how long it should take at most to connect.
+		deadline = time.Now().Add(t.pingTimeout())
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
+
+	conn, err := t.dialContext()(ctx, network, address)
+	if err != nil {
+		return nil, err
+	}
+
+	subch := make(chan *SubConn, 1)
+	errch := make(chan error, 1)
+
+	go func() {
+		sub := NewSubConn(conn)
+		sub.SetWriteDeadline(deadline)
+
+		if err := sub.WriteCommand(command, channels...); err != nil {
+			sub.Close()
+			errch <- err
+			return
+		}
+
+		sub.SetDeadline(time.Time{})
+		subch <- sub
+	}()
+
+	select {
+	case sub := <-subch:
+		return sub, nil
+
+	case err := <-errch:
+		return nil, err
+
+	case <-ctx.Done():
+		conn.Close()
+		return nil, ctx.Err()
+	}
+}
+
 // RoundTrip implements the RoundTripper interface.
 //
 // For higher-level Redis client support, see Exec, Query, and the Client type.
@@ -126,31 +184,42 @@ func (t *Transport) conn(addr string) conn {
 }
 
 func (t *Transport) poolConfig(addr string) poolConfig {
-	config := poolConfig{
+	return poolConfig{
 		addr:         addr,
-		size:         t.ConnsPerHost,
-		dialContext:  t.DialContext,
-		pingTimeout:  t.PingTimeout,
-		pingInterval: t.PingInterval,
+		size:         t.connsPerHost(),
+		dialContext:  t.dialContext(),
+		pingTimeout:  t.pingTimeout(),
+		pingInterval: t.pingInterval(),
 	}
+}
 
-	if config.size == 0 {
-		config.size = 1
+func (t *Transport) connsPerHost() int {
+	if connsPerHost := t.ConnsPerHost; connsPerHost != 0 {
+		return connsPerHost
 	}
+	return 1
+}
 
-	if config.dialContext == nil {
-		config.dialContext = DefaultDialer.DialContext
+func (t *Transport) dialContext() func(context.Context, string, string) (net.Conn, error) {
+	dialContext := t.DialContext
+	if dialContext == nil {
+		dialContext = DefaultDialer.DialContext
 	}
+	return dialContext
+}
 
-	if config.pingTimeout == 0 {
-		config.pingTimeout = 10 * time.Second
+func (t *Transport) pingTimeout() time.Duration {
+	if pingTimeout := t.PingTimeout; pingTimeout != 0 {
+		return pingTimeout
 	}
+	return 10 * time.Second
+}
 
-	if config.pingInterval == 0 {
-		config.pingInterval = 30 * time.Second
+func (t *Transport) pingInterval() time.Duration {
+	if pingInterval := t.PingInterval; pingInterval != 0 {
+		return pingInterval
 	}
-
-	return config
+	return 30 * time.Second
 }
 
 // DefaultTransport is the default implementation of Transport and is used by
