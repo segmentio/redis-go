@@ -27,6 +27,7 @@ func (proxy *ReverseProxy) ServeRedis(w ResponseWriter, r *Request) {
 		var channel string
 
 		for r.Args.Next(&channel) {
+			// TOOD: limit the number of channels read here
 			channels = append(channels, channel)
 		}
 
@@ -42,6 +43,7 @@ func (proxy *ReverseProxy) ServeRedis(w ResponseWriter, r *Request) {
 		}
 
 		proxy.servePubSub(conn, rw, req.Cmd, channels...)
+		// TOD: figure out a way to pass the connection back in regular mode
 		return
 	}
 
