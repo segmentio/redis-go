@@ -15,7 +15,7 @@ import (
 //
 // Instances of SubConn are safe for concurrent use by multiple goroutines.
 type SubConn struct {
-	c net.Conn
+	conn net.Conn
 
 	rmtx sync.Mutex
 	rbuf bufio.Reader
@@ -28,7 +28,7 @@ type SubConn struct {
 
 // NewSubConn creates a new SubConn from a pre-existing network connection.
 func NewSubConn(conn net.Conn) *SubConn {
-	sub := &SubConn{c: conn}
+	sub := &SubConn{conn: conn}
 	sub.rbuf.Reset(conn)
 	sub.wbuf.Reset(conn)
 	sub.dec = *resp.NewDecoder(&sub.rbuf)
@@ -64,7 +64,7 @@ func (sub *SubConn) WriteCommand(command string, channels ...string) (err error)
 	}
 
 	if err = sub.wbuf.Flush(); err != nil {
-		sub.c.Close()
+		sub.conn.Close()
 		return
 	}
 
@@ -86,7 +86,7 @@ func (sub *SubConn) ReadMessage() (channel string, message []byte, err error) {
 		args := make([][]byte, 0, 3)
 
 		if err = sub.dec.Decode(&args); err != nil {
-			sub.c.Close()
+			sub.conn.Close()
 			return
 		}
 
@@ -100,14 +100,14 @@ func (sub *SubConn) ReadMessage() (channel string, message []byte, err error) {
 // Close closes the connection, writing commands or reading messages from the
 // connection after Close was called will return errors.
 func (sub *SubConn) Close() error {
-	return sub.c.Close()
+	return sub.conn.Close()
 }
 
 // SetReadDeadline sets the deadline for future ReadFrom calls and any
 // currently-blocked ReadFrom call. A zero value for t means ReadFrom will
 // not time out.
 func (sub *SubConn) SetReadDeadline(t time.Time) error {
-	return sub.c.SetReadDeadline(t)
+	return sub.conn.SetReadDeadline(t)
 }
 
 // SetWriteDeadline sets the deadline for future WriteTo calls and any
@@ -115,7 +115,7 @@ func (sub *SubConn) SetReadDeadline(t time.Time) error {
 // indicating that some of the data was successfully written.
 // A zero value for t means WriteTo will not time out.
 func (sub *SubConn) SetWriteDeadline(t time.Time) error {
-	return sub.c.SetWriteDeadline(t)
+	return sub.conn.SetWriteDeadline(t)
 }
 
 // SetDeadline sets the read and write deadlines associated with the connection.
@@ -132,15 +132,15 @@ func (sub *SubConn) SetWriteDeadline(t time.Time) error {
 //
 // A zero value for t means I/O operations will not time out.
 func (sub *SubConn) SetDeadline(t time.Time) error {
-	return sub.c.SetDeadline(t)
+	return sub.conn.SetDeadline(t)
 }
 
 // LocalAddr returns the local network address.
 func (sub *SubConn) LocalAddr() net.Addr {
-	return sub.c.LocalAddr()
+	return sub.conn.LocalAddr()
 }
 
 // RemoteAddr returns the remote network address.
 func (sub *SubConn) RemoteAddr() net.Addr {
-	return sub.c.RemoteAddr()
+	return sub.conn.RemoteAddr()
 }
