@@ -12,7 +12,7 @@ type hashNode struct {
 }
 
 const (
-	hashRingReplication = 100
+	hashRingReplication = 40
 )
 
 func makeHashRing(endpoints ...ServerEndpoint) hashRing {
