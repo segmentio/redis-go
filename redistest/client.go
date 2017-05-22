@@ -24,7 +24,7 @@ type Client interface {
 // uses to create Clients to run the tests against.
 type MakeClient func() (client Client, close func(), err error)
 
-// TestClient is a test suite that verify the behavior of redis clients.
+// TestClient is a test suite which verifies the behavior of redis clients.
 func TestClient(t *testing.T, makeClient MakeClient) {
 	tests := []struct {
 		scenario string

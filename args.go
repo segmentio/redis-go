@@ -74,6 +74,58 @@ func ParseArgs(args Args, dsts ...interface{}) error {
 	return args.Close()
 }
 
+// MultiArgs returns an Args value that produces values sequentially from all of
+// the given argument lists.
+func MultiArgs(args ...Args) Args {
+	return &multiArgs{args: args}
+}
+
+type multiArgs struct {
+	args []Args
+	err  error
+}
+
+func (m *multiArgs) Close() (err error) {
+	for _, a := range m.args {
+		if e := a.Close(); e != nil && err == nil {
+			err = e
+		}
+	}
+
+	if m.err != nil {
+		err = m.err
+	}
+
+	return
+}
+
+func (m *multiArgs) Len() (n int) {
+	if m.err == nil {
+		for _, a := range m.args {
+			n += a.Len()
+		}
+	}
+	return
+}
+
+func (m *multiArgs) Next(dst interface{}) bool {
+	if len(m.args) == 0 || m.err != nil {
+		return false
+	}
+
+	for !m.args[0].Next(dst) {
+		if err := m.args[0].Close(); err != nil {
+			m.err = err
+			return false
+		}
+		if m.args = m.args[1:]; len(m.args) == 0 {
+			return false
+		}
+	}
+
+	return true
+}
+
 type argsError struct {
 	err error
 }
