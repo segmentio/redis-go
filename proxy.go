@@ -44,10 +44,10 @@ func (proxy *ReverseProxy) ServeRedis(w ResponseWriter, r *Request) {
 
 		proxy.servePubSub(conn, rw, r.Cmd, channels...)
 		// TOD: figure out a way to pass the connection back in regular mode
-		return
-	}
 
-	proxy.serveRequest(w, r)
+	default:
+		proxy.serveRequest(w, r)
+	}
 }
 
 func (proxy *ReverseProxy) serveRequest(w ResponseWriter, r *Request) {
