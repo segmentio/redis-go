@@ -30,32 +30,34 @@ type ReverseProxy struct {
 
 // ServeRedis satisfies the Handler interface.
 func (proxy *ReverseProxy) ServeRedis(w ResponseWriter, r *Request) {
-	switch r.Cmd {
-	case "SUBSCRIBE", "PSUBSCRIBE":
-		var channels []string
-		var channel string
+	for _, cmd := range r.Cmds {
+		switch cmd.Cmd {
+		case "SUBSCRIBE", "PSUBSCRIBE":
+			var channels []string
+			var channel string
 
-		for r.Args.Next(&channel) {
-			// TOOD: limit the number of channels read here
-			channels = append(channels, channel)
+			for cmd.Args.Next(&channel) {
+				// TOOD: limit the number of channels read here
+				channels = append(channels, channel)
+			}
+
+			if err := cmd.Args.Close(); err != nil {
+				proxy.log(err)
+				return
+			}
+
+			conn, rw, err := w.(Hijacker).Hijack()
+			if err != nil {
+				proxy.log(err)
+				return
+			}
+
+			proxy.servePubSub(conn, rw, cmd.Cmd, channels...)
+			// TOD: figure out a way to pass the connection back in regular mode
+
+		default:
+			proxy.serveRequest(w, r)
 		}
-
-		if err := r.Args.Close(); err != nil {
-			proxy.log(err)
-			return
-		}
-
-		conn, rw, err := w.(Hijacker).Hijack()
-		if err != nil {
-			proxy.log(err)
-			return
-		}
-
-		proxy.servePubSub(conn, rw, r.Cmd, channels...)
-		// TODO: figure out a way to pass the connection back in regular mode
-
-	default:
-		proxy.serveRequest(w, r)
 	}
 }
 
@@ -63,7 +65,7 @@ func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
 	key, ok := req.getKey()
 
 	if !ok {
-		w.Write(errorf("command %q has no key and therefore cannot be proxied", req.Cmd))
+		w.Write(errorf("no valid key found for the request and therefore cannot be proxied"))
 		return
 	}
 
@@ -93,21 +95,23 @@ func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
 	}
 
 	defer func() {
-		if err := res.Args.Close(); err != nil {
+		if err := res.Close(); err != nil {
 			proxy.log(err)
 		}
 	}()
 
-	if err := w.WriteStream(res.Args.Len()); err != nil {
-		w.Write(errorf("internal server error"))
-		proxy.log(err)
-		return
-	}
+	for _, args := range res.Args {
+		if err := w.WriteStream(args.Len()); err != nil {
+			w.Write(errorf("internal server error"))
+			proxy.log(err)
+			return
+		}
 
-	var v interface{}
-	for res.Args.Next(&v) {
-		w.Write(v)
-		v = nil
+		var v interface{}
+		for args.Next(&v) {
+			w.Write(v)
+			v = nil
+		}
 	}
 }
 

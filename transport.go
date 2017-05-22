@@ -13,7 +13,7 @@ import (
 //
 // A RoundTripper must be safe for concurrent use by multiple goroutines.
 type RoundTripper interface {
-	// RoundTrip executes a single Redis transaction, returning/ a Response for
+	// RoundTrip executes a single Redis transaction, returning a Response for
 	// the provided Request.
 	//
 	// RoundTrip should not attempt to interpret the response. In particular,

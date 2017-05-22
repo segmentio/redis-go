@@ -14,11 +14,14 @@ func TestTransport(t *testing.T) {
 		var transport Transport
 
 		if res, err := transport.RoundTrip(
-			NewRequest("localhost:6379", "SET", List("redis-go.test.transport.CloseIdleConnections", "0123456789")),
+			NewRequest(
+				"localhost:6379",
+				*NewCommand("SET", List("redis-go.test.transport.CloseIdleConnections", "0123456789")),
+			),
 		); err != nil {
 			t.Error(err)
 		} else {
-			res.Args.Close()
+			res.Close()
 		}
 
 		transport.CloseIdleConnections()
@@ -41,29 +44,37 @@ func TestTransport(t *testing.T) {
 				var key = fmt.Sprintf("redis-go.test.transport.RoundTrip-%02d", i)
 				var val = fmt.Sprintf("%02d", i)
 
-				if res, err = transport.RoundTrip(NewRequest("localhost:6379", "SET", List(key, val))); err != nil {
+				if res, err = transport.RoundTrip(NewRequest(
+					"localhost:6379",
+					*NewCommand("SET", List(key, val)),
+				)); err != nil {
 					t.Error(err)
 					return
 				}
 
-				if err = res.Args.Close(); err != nil {
+				if err = res.Close(); err != nil {
 					t.Error(err)
 					return
 				}
 
-				if res, err = transport.RoundTrip(NewRequest("localhost:6379", "GET", List(key))); err != nil {
+				if res, err = transport.RoundTrip(NewRequest(
+					"localhost:6379",
+					*NewCommand("GET", List(key)),
+				)); err != nil {
 					t.Error(err)
 					return
 				}
 
 				var arg string
-				for res.Args.Next(&arg) {
-					if arg != val {
-						t.Errorf("bad value: %s != %s", arg, val)
+				for _, args := range res.Args {
+					for args.Next(&arg) {
+						if arg != val {
+							t.Errorf("bad value: %s != %s", arg, val)
+						}
 					}
 				}
 
-				if err = res.Args.Close(); err != nil {
+				if err = res.Close(); err != nil {
 					t.Error(err)
 					return
 				}
@@ -84,11 +95,14 @@ func TestTransport(t *testing.T) {
 		}
 
 		if res, err := transport.RoundTrip(
-			NewRequest("localhost:6379", "SET", List("redis-go.test.transport.KeepAlive", "0123456789")),
+			NewRequest(
+				"localhost:6379",
+				*NewCommand("SET", List("redis-go.test.transport.KeepAlive", "0123456789")),
+			),
 		); err != nil {
 			t.Error(err)
 		} else {
-			res.Args.Close()
+			res.Close()
 		}
 
 		// Wait a bunch so the transport's internal goroutines will cleanup the

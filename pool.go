@@ -73,13 +73,13 @@ func dialLoop(txch <-chan connTx, config poolConfig) {
 
 			if conn != nil && now.Sub(optime) >= config.pingInterval {
 				ctx, cancel := contextWithTimeout(context.Background(), config.pingTimeout)
-				tx := makeConnTx(ctx, &Request{Cmd: "PING"})
+				tx := makeConnTx(ctx, &Request{Cmds: []Command{{Cmd: "PING"}}})
 				conn.send(tx)
 
 				go func(tx connTx) {
 					defer cancel()
 					if r, err := tx.recv(); err == nil {
-						r.Args.Close()
+						r.Close()
 					}
 				}(tx)
 			}

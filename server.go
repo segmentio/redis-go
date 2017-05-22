@@ -305,21 +305,21 @@ func (s *Server) serveConnection(ctx context.Context, c *serverConn, config serv
 }
 
 func (s *Server) serveRequest(res *responseWriter, req *Request) (err error) {
-	args := req.Args
+	for _, cmd := range req.Cmds {
+		switch cmd.Cmd {
+		case "PING":
+			msg := "PONG"
+			req.ParseArgs(&msg)
+			res.Write(msg)
 
-	switch req.Cmd {
-	case "PING":
-		msg := "PONG"
-		req.ParseArgs(&msg)
-		res.Write(msg)
+		default:
+			err = s.serveRedis(res, req)
+			cmd.Args.Close()
+		}
 
-	default:
-		err = s.serveRedis(res, req)
-		args.Close()
-	}
-
-	if err == nil {
-		err = res.Flush()
+		if err == nil {
+			err = res.Flush()
+		}
 	}
 
 	return
@@ -494,14 +494,42 @@ func deadline(timeout time.Duration) time.Time {
 func readRequest(ctx context.Context, conn *serverConn, done chan<- error) (*Request, error) {
 	args := newByteArgsReader(&conn.p, done)
 
-	req := &Request{
-		Addr:    conn.RemoteAddr().String(),
-		Args:    args,
-		Context: ctx,
+	cmd := Command{
+		Args: args,
 	}
 
-	if !args.Next(&req.Cmd) {
+	if !args.Next(&cmd.Cmd) {
 		return nil, args.Close()
+	}
+
+	cmds := []Command{cmd}
+	if cmd.Cmd == "MULTI" {
+		for cmd.Cmd != "EXEC" {
+			cmd.Args = nil
+			args = newByteArgsReader(&conn.p, nil)
+
+			if !args.Next(&cmd.Cmd) {
+				break
+			}
+
+			a := []interface{}{}
+			var data []byte
+			for args.Next(&data) {
+				a = append(a, data)
+				data = nil
+			}
+			if err := args.Close(); err != nil {
+				return nil, err
+			}
+			cmd.Args = List(a...)
+			cmds = append(cmds, cmd)
+		}
+	}
+
+	req := &Request{
+		Addr:    conn.RemoteAddr().String(),
+		Cmds:    cmds,
+		Context: ctx,
 	}
 
 	return req, nil

@@ -77,8 +77,12 @@ func TestServer(t *testing.T) {
 		key := getKey()
 
 		srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
-			if req.Cmd != "SET" {
-				t.Error("invalid command received by the server:", req.Cmd)
+			if len(req.Cmds) > 1 {
+				t.Error("server received more than one command :", len(req.Cmds))
+			}
+			c := req.Cmds[0]
+			if c.Cmd != "SET" {
+				t.Error("invalid command received by the server:", c.Cmd)
 				return
 			}
 
@@ -120,8 +124,12 @@ func TestServer(t *testing.T) {
 		key := getKey()
 
 		srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
-			if req.Cmd != "LRANGE" {
-				t.Error("invalid command received by the server:", req.Cmd)
+			if len(req.Cmds) > 1 {
+				t.Error("server received more than one command :", req.Cmds)
+			}
+			c := req.Cmds[0]
+			if c.Cmd != "LRANGE" {
+				t.Error("invalid command received by the server:", c.Cmd)
 				return
 			}
 
@@ -308,6 +316,49 @@ func TestServer(t *testing.T) {
 
 		} else if s := e.Error(); s != respErr.Error() {
 			t.Error("unexpected error string:", s)
+		}
+	})
+
+	t.Run("set multiple keys, then gracefully shutdown", func(t *testing.T) {
+		t.Parallel()
+		k1 := getKey()
+		k2 := getKey()
+
+		srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
+			expectedCmds := []string{"MULTI", "SET", "SET", "EXEC"}
+			if len(req.Cmds) != 4 {
+				t.Error("expected 4 commands, got: ", len(req.Cmds))
+			}
+
+			for i, c := range req.Cmds {
+				if c.Cmd != expectedCmds[i] {
+					t.Errorf("expected command %s, got: %s", expectedCmds[i], c.Cmd)
+					return
+				}
+			}
+
+			res.Write("OK")
+		}))
+		defer srv.Close()
+
+		tr := &redis.Transport{}
+		defer tr.CloseIdleConnections()
+
+		cli := &redis.Client{Addr: url, Transport: tr}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		err := cli.MultiExec(ctx,
+			redis.Command{Cmd: "SET", Args: redis.List(k1, "0123456789")},
+			redis.Command{Cmd: "SET", Args: redis.List(k2, "9876543210")},
+		)
+		if err != nil {
+			t.Error(err)
+		}
+
+		if err := srv.Shutdown(ctx); err != nil {
+			t.Error(err)
 		}
 	})
 }
