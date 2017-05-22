@@ -1,10 +1,6 @@
 package redis
 
-import (
-	"fmt"
-	"sort"
-	"strings"
-)
+import "sort"
 
 // hashRing is the implementation of a consistent hashing distribution of string
 // keys to server addresses.
@@ -64,14 +60,6 @@ func (ring hashRing) lookup(key string) (addr string) {
 
 	addr = ring[i].addr
 	return
-}
-
-func (ring hashRing) String() string {
-	parts := make([]string, 0, len(ring))
-	for _, node := range ring {
-		parts = append(parts, fmt.Sprintf("- %s: %d", node.addr, node.hash))
-	}
-	return strings.Join(parts, "\n")
 }
 
 // much better throughput because it doesn't force memory allocation to mask
