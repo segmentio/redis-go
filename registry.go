@@ -1,9 +1,6 @@
 package redis
 
-import (
-	"context"
-	"net"
-)
+import "context"
 
 // The ServerRegistry interface is an abstraction used to expose a (potentially
 // changing) list of backend redis servers.
@@ -15,7 +12,7 @@ type ServerRegistry interface {
 // A ServerEndpoint represents a single backend redis server.
 type ServerEndpoint struct {
 	Name string
-	Addr net.Addr
+	Addr string
 }
 
 // ListServers satisfies the ServerRegistry interface.
