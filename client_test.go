@@ -1,44 +1,28 @@
-package redis
+package redis_test
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
+
+	redis "github.com/segmentio/redis-go"
+	"github.com/segmentio/redis-go/redistest"
 )
 
 func TestClient(t *testing.T) {
-	n := int32(0)
-
-	getKey := func() string {
-		i := atomic.AddInt32(&n, 1)
-		return fmt.Sprintf("redis-go.test.client.%d", i)
-	}
-
-	t.Run("set a string key", func(t *testing.T) {
-		t.Parallel()
-
-		key := getKey()
-
-		if err := Exec(context.Background(), "SET", key, "0123456789"); err != nil {
-			t.Error(err)
-		}
+	redistest.TestClient(t, func() (redistest.Client, func(), error) {
+		transport := &redis.Transport{}
+		return &testClient{Client: redis.Client{Addr: "localhost:6379", Transport: transport}}, transport.CloseIdleConnections, nil
 	})
+}
 
-	t.Run("set and get a string key", func(t *testing.T) {
-		t.Parallel()
+type testClient struct {
+	redis.Client
+}
 
-		ctx := context.Background()
-		key := getKey()
+func (tc *testClient) Subscribe(ctx context.Context, channels ...string) (*redis.SubConn, error) {
+	return tc.Transport.(*redis.Transport).Subscribe(ctx, "tcp", tc.Addr, channels...)
+}
 
-		if err := Exec(ctx, "SET", key, "0123456789"); err != nil {
-			t.Error(err)
-		}
-
-		if s, err := String(Query(ctx, "GET", key)); err != nil {
-			t.Error(err)
-		} else if s != "0123456789" {
-			t.Error("bad value:", s)
-		}
-	})
+func (tc *testClient) PSubscribe(ctx context.Context, patterns ...string) (*redis.SubConn, error) {
+	return tc.Transport.(*redis.Transport).PSubscribe(ctx, "tcp", tc.Addr, patterns...)
 }
