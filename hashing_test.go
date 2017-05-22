@@ -151,11 +151,7 @@ func BenchmarkHashRing(b *testing.B) {
 		ServerEndpoint{Addr: "127.0.0.1:1009"},
 	)
 
-	keys := [...]string{
-		"A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
-	}
-
 	for i := 0; i != b.N; i++ {
-		ring.lookup(keys[i%len(keys)])
+		ring.lookup("DAB45194-42CC-4106-AB9F-2447FA4D35C2")
 	}
 }
