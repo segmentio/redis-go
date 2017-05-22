@@ -6,18 +6,6 @@ import "sort"
 // keys to server addresses.
 type hashRing []hashNode
 
-func (r hashRing) Len() int {
-	return len(r)
-}
-
-func (r hashRing) Less(i int, j int) bool {
-	return r[i].hash < r[j].hash
-}
-
-func (r hashRing) Swap(i int, j int) {
-	r[i], r[j] = r[j], r[i]
-}
-
 type hashNode struct {
 	addr string
 	hash uint64
@@ -60,6 +48,18 @@ func (ring hashRing) lookup(key string) (addr string) {
 
 	addr = ring[i].addr
 	return
+}
+
+func (r hashRing) Len() int {
+	return len(r)
+}
+
+func (r hashRing) Less(i int, j int) bool {
+	return r[i].hash < r[j].hash
+}
+
+func (r hashRing) Swap(i int, j int) {
+	r[i], r[j] = r[j], r[i]
 }
 
 // much better throughput because it doesn't force memory allocation to mask
