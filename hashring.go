@@ -66,14 +66,6 @@ func (r hashRing) Swap(i int, j int) {
 	r[i], r[j] = r[j], r[i]
 }
 
-// much better throughput because it doesn't force memory allocation to mask
-// the hash sum into an interface and convert the string to a byte slice.
-const (
-	// FNV-1a
-	offset64 = uint64(14695981039346656037)
-	prime64  = uint64(1099511628211)
-)
-
 func consistentHash(h uint64) uint64 {
 	const radix = 1e9
 	return h % radix
