@@ -1,6 +1,10 @@
 package redis
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/segmentio/fasthash/fnv1a"
+)
 
 // hashRing is the implementation of a consistent hashing distribution of string
 // keys to server addresses.
@@ -23,12 +27,12 @@ func makeHashRing(endpoints ...ServerEndpoint) hashRing {
 	ring := make(hashRing, 0, hashRingReplication*len(endpoints))
 
 	for _, endpoint := range endpoints {
-		h := hash(endpoint.Addr)
+		h := fnv1a.HashString64(endpoint.Addr)
 
 		for i := 0; i != hashRingReplication; i++ {
 			ring = append(ring, hashNode{
 				addr: endpoint.Addr,
-				hash: consistentHash(hashN(h, uint64(i))),
+				hash: consistentHash(fnv1a.AddUint64(h, uint64(i))),
 			})
 		}
 	}
@@ -39,7 +43,7 @@ func makeHashRing(endpoints ...ServerEndpoint) hashRing {
 
 func (ring hashRing) lookup(key string) (addr string) {
 	n := len(ring)
-	h := consistentHash(hash(key))
+	h := consistentHash(fnv1a.HashString64(key))
 	i := sort.Search(n, func(i int) bool { return h < ring[i].hash })
 
 	if i == n {
@@ -73,24 +77,4 @@ const (
 func consistentHash(h uint64) uint64 {
 	const radix = 1e9
 	return h % radix
-}
-
-func hash(s string) uint64 {
-	return hashS(offset64, s)
-}
-
-func hashS(h uint64, s string) uint64 {
-	for i := range s {
-		h ^= uint64(s[i])
-		h *= prime64
-	}
-	return h
-}
-
-func hashN(h uint64, n uint64) uint64 {
-	for i := 0; i != 8; i++ {
-		h ^= (n >> uint64(i*8)) & 0xFF
-		h *= prime64
-	}
-	return h
 }
