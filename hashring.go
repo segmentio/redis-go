@@ -3,7 +3,7 @@ package redis
 import (
 	"sort"
 
-	"github.com/segmentio/fasthash/fnv1a"
+	"github.com/segmentio/fasthash/jody"
 )
 
 // hashRing is the implementation of a consistent hashing distribution of string
@@ -27,12 +27,12 @@ func makeHashRing(endpoints ...ServerEndpoint) hashRing {
 	ring := make(hashRing, 0, hashRingReplication*len(endpoints))
 
 	for _, endpoint := range endpoints {
-		h := fnv1a.HashString64(endpoint.Addr)
+		h := jody.HashString64(endpoint.Addr)
 
 		for i := 0; i != hashRingReplication; i++ {
 			ring = append(ring, hashNode{
 				addr: endpoint.Addr,
-				hash: consistentHash(fnv1a.AddUint64(h, uint64(i))),
+				hash: consistentHash(jody.AddUint64(h, uint64(i))),
 			})
 		}
 	}
@@ -43,7 +43,7 @@ func makeHashRing(endpoints ...ServerEndpoint) hashRing {
 
 func (ring hashRing) lookup(key string) (addr string) {
 	n := len(ring)
-	h := consistentHash(fnv1a.HashString64(key))
+	h := consistentHash(jody.HashString64(key))
 	i := sort.Search(n, func(i int) bool { return h < ring[i].hash })
 
 	if i == n {
