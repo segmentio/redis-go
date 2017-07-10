@@ -1,4 +1,4 @@
-package redis
+package redis_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/segmentio/objconv/resp"
+	redis "github.com/segmentio/redis-go"
 )
 
 func TestServer(t *testing.T) {
@@ -64,7 +65,7 @@ func TestServer(t *testing.T) {
 		e := &testError{temporary: false}
 		l := &testErrorListener{err: e}
 
-		srv := &Server{}
+		srv := &redis.Server{}
 
 		if err := srv.Serve(l); err != e {
 			t.Error(err)
@@ -75,7 +76,7 @@ func TestServer(t *testing.T) {
 		t.Parallel()
 		key := getKey()
 
-		srv, url := newServer(HandlerFunc(func(res ResponseWriter, req *Request) {
+		srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
 			if req.Cmd != "SET" {
 				t.Error("invalid command received by the server:", req.Cmd)
 				return
@@ -97,10 +98,10 @@ func TestServer(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		tr := &Transport{}
+		tr := &redis.Transport{}
 		defer tr.CloseIdleConnections()
 
-		cli := &Client{Addr: url, Transport: tr}
+		cli := &redis.Client{Addr: url, Transport: tr}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -118,7 +119,7 @@ func TestServer(t *testing.T) {
 		t.Parallel()
 		key := getKey()
 
-		srv, url := newServer(HandlerFunc(func(res ResponseWriter, req *Request) {
+		srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
 			if req.Cmd != "LRANGE" {
 				t.Error("invalid command received by the server:", req.Cmd)
 				return
@@ -148,10 +149,10 @@ func TestServer(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		tr := &Transport{}
+		tr := &redis.Transport{}
 		defer tr.CloseIdleConnections()
 
-		cli := &Client{Addr: url, Transport: tr}
+		cli := &redis.Client{Addr: url, Transport: tr}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -184,7 +185,7 @@ func TestServer(t *testing.T) {
 	t.Run("fetch multiple streams of values, then gracefully shutdown", func(t *testing.T) {
 		t.Parallel()
 
-		srv, url := newServer(HandlerFunc(func(res ResponseWriter, req *Request) {
+		srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
 			var i int
 			var j int
 			req.ParseArgs(nil, &i, &j)
@@ -203,7 +204,7 @@ func TestServer(t *testing.T) {
 
 		wg := sync.WaitGroup{}
 
-		tr := &Transport{ConnsPerHost: 2}
+		tr := &redis.Transport{ConnsPerHost: 2}
 		defer tr.CloseIdleConnections()
 
 		for i := 0; i != 5; i++ {
@@ -212,7 +213,7 @@ func TestServer(t *testing.T) {
 			go func(i int, key string) {
 				defer wg.Done()
 
-				cli := &Client{Addr: url, Transport: tr}
+				cli := &redis.Client{Addr: url, Transport: tr}
 
 				it := cli.Query(ctx, "LRANGE-"+strconv.Itoa(i), key, 0, i)
 
@@ -246,27 +247,27 @@ func TestServer(t *testing.T) {
 	t.Run("hijack connections, ensure that the response writer is unusable afterward", func(t *testing.T) {
 		t.Parallel()
 
-		srv, url := newServer(HandlerFunc(func(res ResponseWriter, req *Request) {
-			conn, _, err := res.(Hijacker).Hijack()
+		srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
+			conn, _, err := res.(redis.Hijacker).Hijack()
 
 			if err != nil {
 				t.Error("Hijack failed:", err)
 				return
 			}
 
-			if err := res.WriteStream(1); err != errHijacked {
+			if err := res.WriteStream(1); err != redis.ErrHijacked {
 				t.Error("expected an error on the server after the connection was hijacked but got", err)
 			}
 
-			if err := res.Write(nil); err != errHijacked {
+			if err := res.Write(nil); err != redis.ErrHijacked {
 				t.Error("expected an error on the server after the connection was hijacked but got", err)
 			}
 
-			if err := res.(Flusher).Flush(); err != errHijacked {
+			if err := res.(redis.Flusher).Flush(); err != redis.ErrHijacked {
 				t.Error("expected an error on the server after the connection was hijacked but got", err)
 			}
 
-			if _, _, err := res.(Hijacker).Hijack(); err != errHijacked {
+			if _, _, err := res.(redis.Hijacker).Hijack(); err != redis.ErrHijacked {
 				t.Error("expected an error on the server after the connection was hijacked but got", err)
 			}
 
@@ -274,10 +275,10 @@ func TestServer(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		tr := &Transport{ConnsPerHost: 2}
+		tr := &redis.Transport{ConnsPerHost: 2}
 		defer tr.CloseIdleConnections()
 
-		cli := &Client{Addr: url, Transport: tr}
+		cli := &redis.Client{Addr: url, Transport: tr}
 
 		if err := cli.Exec(context.Background(), "SET", "hello", "world"); err == nil {
 			t.Error("expected an error on the client when the connection is hijacked and closed but got <nil>")
@@ -289,15 +290,15 @@ func TestServer(t *testing.T) {
 
 		respErr := resp.NewError("ERR something went wrong")
 
-		srv, url := newServer(HandlerFunc(func(res ResponseWriter, req *Request) {
+		srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
 			res.Write(respErr)
 		}))
 		defer srv.Close()
 
-		tr := &Transport{ConnsPerHost: 1}
+		tr := &redis.Transport{ConnsPerHost: 1}
 		defer tr.CloseIdleConnections()
 
-		cli := &Client{Addr: url, Transport: tr}
+		cli := &redis.Client{Addr: url, Transport: tr}
 
 		if err := cli.Exec(context.Background(), "SET", "hello", "world"); err == nil {
 			t.Error("expected a redis protocol error but got <nil>")
@@ -311,13 +312,13 @@ func TestServer(t *testing.T) {
 	})
 }
 
-func newServer(handler Handler) (srv *Server, url string) {
+func newServer(handler redis.Handler) (srv *redis.Server, url string) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		panic(err)
 	}
 
-	srv = &Server{
+	srv = &redis.Server{
 		Handler:      handler,
 		ReadTimeout:  100 * time.Millisecond,
 		WriteTimeout: 100 * time.Millisecond,

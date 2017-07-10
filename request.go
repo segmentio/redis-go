@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"io"
+	"sync"
 
 	"github.com/segmentio/objconv"
 	"github.com/segmentio/objconv/resp"
@@ -37,6 +38,9 @@ type Request struct {
 	// If not nil, this context is used to control asynchronous cancellation of
 	// the request when it is passed to a RoundTripper.
 	Context context.Context
+
+	once sync.Once
+	key  *string
 }
 
 // NewRequest returns a new Request, given an address, command, and list of
@@ -77,4 +81,21 @@ func (req *Request) Write(w io.Writer) error {
 	}
 
 	return enc.Close()
+}
+
+func (req *Request) getKey() (string, bool) {
+	req.once.Do(func() {
+		var key string
+
+		if req.Args.Next(&key) {
+			req.key = &key
+			req.Args = MultiArgs(List(key), req.Args)
+		}
+	})
+
+	if req.key == nil {
+		return "", false
+	}
+
+	return *req.key, true
 }

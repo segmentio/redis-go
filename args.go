@@ -202,17 +202,13 @@ type byteArgsReader struct {
 }
 
 func newByteArgsReader(p *resp.Parser, done chan<- error) *byteArgsReader {
-	return &byteArgsReader{
-		argsReader: *newArgsReader(p, done),
-	}
+	r := &byteArgsReader{argsReader: *newArgsReader(p, done)}
+	r.b = r.a[:0]
+	return r
 }
 
 func (args *byteArgsReader) Next(val interface{}) (ok bool) {
-	if args.b == nil {
-		args.b = args.a[:0]
-	} else {
-		args.b = args.b[:0]
-	}
+	args.b = args.b[:0]
 
 	if ok = args.argsReader.Next(&args.b); ok {
 		if v := reflect.ValueOf(val); v.IsValid() {
@@ -246,6 +242,9 @@ func (args *byteArgsReader) parse(v reflect.Value) error {
 		if v.Type().Elem().Kind() == reflect.Uint8 {
 			return args.parseBytes(v)
 		}
+
+	case reflect.Interface:
+		return args.parseValue(v)
 	}
 
 	return fmt.Errorf("unsupported output type for value in argument of a redis command: %s", v.Type())
@@ -294,5 +293,10 @@ func (args *byteArgsReader) parseString(v reflect.Value) error {
 
 func (args *byteArgsReader) parseBytes(v reflect.Value) error {
 	v.SetBytes(append(v.Bytes()[:0], args.b...))
+	return nil
+}
+
+func (args *byteArgsReader) parseValue(v reflect.Value) error {
+	v.Set(reflect.ValueOf(append(make([]byte, 0, len(args.b)), args.b...)))
 	return nil
 }

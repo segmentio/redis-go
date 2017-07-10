@@ -339,7 +339,7 @@ func (s *Server) serveRedis(res ResponseWriter, req *Request) (err error) {
 }
 
 func (s *Server) log(err error) {
-	if err != errHijacked {
+	if err != ErrHijacked {
 		print := log.Print
 		if logger := s.ErrorLog; logger != nil {
 			print = logger.Print
@@ -537,18 +537,18 @@ type responseWriter struct {
 
 func (res *responseWriter) WriteStream(n int) error {
 	if res.conn == nil {
-		return errHijacked
+		return ErrHijacked
 	}
 
 	if n < 0 {
-		return errNegativeStreamCount
+		return ErrNegativeStreamCount
 	}
 
 	switch res.wtype {
 	case oneshot:
-		return errStreamCalledAfterWrite
+		return ErrStreamCalledAfterWrite
 	case stream:
-		return errStreamCalledTooManyTimes
+		return ErrStreamCalledTooManyTimes
 	}
 
 	res.waitReadyWrite()
@@ -560,7 +560,7 @@ func (res *responseWriter) WriteStream(n int) error {
 
 func (res *responseWriter) Write(val interface{}) error {
 	if res.conn == nil {
-		return errHijacked
+		return ErrHijacked
 	}
 
 	if res.wtype == notype {
@@ -571,7 +571,7 @@ func (res *responseWriter) Write(val interface{}) error {
 	}
 
 	if res.remain == 0 {
-		return errWriteCalledTooManyTimes
+		return ErrWriteCalledTooManyTimes
 	}
 	res.remain--
 
@@ -584,7 +584,7 @@ func (res *responseWriter) Write(val interface{}) error {
 
 func (res *responseWriter) Flush() error {
 	if res.conn == nil {
-		return errHijacked
+		return ErrHijacked
 	}
 
 	if res.wtype == notype {
@@ -594,7 +594,7 @@ func (res *responseWriter) Flush() error {
 	}
 
 	if res.remain != 0 {
-		return errWriteCalledNotEnoughTimes
+		return ErrWriteCalledNotEnoughTimes
 	}
 
 	return res.conn.Flush()
@@ -602,7 +602,7 @@ func (res *responseWriter) Flush() error {
 
 func (res *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if res.conn == nil {
-		return nil, nil, errHijacked
+		return nil, nil, ErrHijacked
 	}
 	nc := res.conn.Conn
 	rw := &bufio.ReadWriter{
@@ -620,14 +620,11 @@ func (res *responseWriter) waitReadyWrite() {
 
 var (
 	// ErrServerClosed is returned by Server.Serve when the server is closed.
-	ErrServerClosed = errors.New("redis: Server closed")
-)
-
-var (
-	errNegativeStreamCount       = errors.New("invalid call to redis.ResponseWriter.Stream with a negative value")
-	errStreamCalledAfterWrite    = errors.New("invalid call to redis.ResponseWriter.Stream after redis.ResponseWriter.Write was called")
-	errStreamCalledTooManyTimes  = errors.New("multiple calls to ResponseWriter.Stream")
-	errWriteCalledTooManyTimes   = errors.New("too many calls to redis.ResponseWriter.Write")
-	errWriteCalledNotEnoughTimes = errors.New("not enough calls to redis.ResponseWriter.Write")
-	errHijacked                  = errors.New("invalid use of a hijacked redis.ResponseWriter")
+	ErrServerClosed              = errors.New("redis: Server closed")
+	ErrNegativeStreamCount       = errors.New("invalid call to redis.ResponseWriter.Stream with a negative value")
+	ErrStreamCalledAfterWrite    = errors.New("invalid call to redis.ResponseWriter.Stream after redis.ResponseWriter.Write was called")
+	ErrStreamCalledTooManyTimes  = errors.New("multiple calls to ResponseWriter.Stream")
+	ErrWriteCalledTooManyTimes   = errors.New("too many calls to redis.ResponseWriter.Write")
+	ErrWriteCalledNotEnoughTimes = errors.New("not enough calls to redis.ResponseWriter.Write")
+	ErrHijacked                  = errors.New("invalid use of a hijacked redis.ResponseWriter")
 )
