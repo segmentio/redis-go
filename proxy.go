@@ -98,9 +98,7 @@ func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
 		}
 	}()
 
-	n := res.Args.Len()
-
-	if err := w.WriteStream(n); err != nil {
+	if err := w.WriteStream(res.Args.Len()); err != nil {
 		w.Write(errorf("internal server error"))
 		proxy.log(err)
 		return
