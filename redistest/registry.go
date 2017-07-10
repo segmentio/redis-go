@@ -22,12 +22,12 @@ func TestServerRegistry(t *testing.T, makeServerRegistry MakeServerRegistry) {
 		function func(*testing.T, context.Context, redis.ServerRegistry, []redis.ServerEndpoint)
 	}{
 		{
-			scenario: "calling ListServers with a canceled context should return an error",
+			scenario: "calling LookupServers with a canceled context returns an error",
 			function: testServerRegistryCancel,
 		},
 		{
-			scenario: "calling ListServers should return the expected list of servers",
-			function: testServerRegistryListServers,
+			scenario: "calling LookupServers returns the expected list of servers",
+			function: testServerRegistryLookupServers,
 		},
 	}
 
@@ -52,13 +52,13 @@ func testServerRegistryCancel(t *testing.T, ctx context.Context, registry redis.
 	ctx, cancel := context.WithCancel(ctx)
 	cancel()
 
-	if _, err := registry.ListServers(ctx); err == nil {
+	if _, err := registry.LookupServers(ctx); err == nil {
 		t.Error("expected a non-nil error but got", err)
 	}
 }
 
-func testServerRegistryListServers(t *testing.T, ctx context.Context, registry redis.ServerRegistry, endpoints []redis.ServerEndpoint) {
-	servers, err := registry.ListServers(ctx)
+func testServerRegistryLookupServers(t *testing.T, ctx context.Context, registry redis.ServerRegistry, endpoints []redis.ServerEndpoint) {
+	servers, err := registry.LookupServers(ctx)
 
 	if err != nil {
 		t.Error(err)
