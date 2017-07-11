@@ -1,6 +1,15 @@
 version: '2'
 
 services:
+  consul:
+    image: "consul"
+    command: "-server -bootstrap-expect 1 -ui"
+    hostname: "localhost"
+    ports:
+      - "8400:8400"
+      - "8500:8500"
+      - "8600:53"
+
   redis-1:
     image: redis
     ports:
