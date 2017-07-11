@@ -78,6 +78,23 @@ func (c *Client) Exec(ctx context.Context, cmd string, args ...interface{}) erro
 	return ParseArgs(c.Query(ctx, cmd, args...), nil)
 }
 
+// MultiExec issues a request with multiple commands to the Redis service at
+// the address set on the client.
+//
+// See request.go for information about the Command type.
+//
+// An error is returned if the request couldn't be sent or if the command was
+// refused by the Redis server.
+//
+// The context passed as first argument allows the operation to be canceled
+// asynchronously.
+func (c *Client) MultiExec(ctx context.Context, cmds ...Command) error {
+	for _, args := range c.MultiQuery(ctx, cmds...) {
+		args.Close()
+	}
+	return nil
+}
+
 // Query issues a request with cmd and args to the Redis server at the address
 // set on the client, returning the response's Args (which is never nil).
 //
@@ -93,13 +110,54 @@ func (c *Client) Query(ctx context.Context, cmd string, args ...interface{}) Arg
 	}
 
 	r, err := c.Do(&Request{
-		Addr:    addr,
-		Cmd:     cmd,
-		Args:    List(args...),
+		Addr: addr,
+		Cmds: []Command{{
+			Cmd:  cmd,
+			Args: List(args...),
+		}},
 		Context: ctx,
 	})
 	if err != nil {
 		return newArgsError(err)
+	}
+
+	return r.Args[0]
+}
+
+// MultiQuery issues a request with multiple Command to the Redis server at
+// the address set on the client and returns the response's Args.
+//
+// The commands "MULTI" and "EXEC" will be automatically added to the list of
+// Commands.
+//
+// cmds is a list of Command (see request.go)
+//
+// The context passed as first argument allows the operation to be canceled
+// asynchronously.
+func (c *Client) MultiQuery(ctx context.Context, cmds ...Command) []Args {
+	addr := c.Addr
+	if len(addr) == 0 {
+		addr = "localhost:6379"
+	}
+
+	for _, cmd := range cmds {
+		if cmd.Cmd == "MULTI" || cmd.Cmd == "EXEC" {
+			return []Args{newArgsError(errorf("multiQuery cmds should not contain MULTI or EXEC"))}
+		}
+	}
+
+	multi := make([]Command, 0, len(cmds)+2)
+	multi = append(multi, Command{Cmd: "MULTI"})
+	multi = append(multi, cmds...)
+	multi = append(multi, Command{Cmd: "EXEC"})
+
+	r, err := c.Do(&Request{
+		Addr:    addr,
+		Cmds:    multi,
+		Context: ctx,
+	})
+	if err != nil {
+		return []Args{newArgsError(err)}
 	}
 
 	return r.Args
@@ -116,4 +174,14 @@ func Exec(ctx context.Context, cmd string, args ...interface{}) error {
 // Query is a wrapper around DefaultClient.Query.
 func Query(ctx context.Context, cmd string, args ...interface{}) Args {
 	return DefaultClient.Query(ctx, cmd, args...)
+}
+
+// MultiExec is a wrapper around DefaultClient.Exec.
+func MultiExec(ctx context.Context, cmds ...Command) error {
+	return DefaultClient.MultiExec(ctx, cmds...)
+}
+
+// Query is a wrapper around DefaultClient.Query.
+func MultiQuery(ctx context.Context, cmds ...Command) []Args {
+	return DefaultClient.MultiQuery(ctx, cmds...)
 }

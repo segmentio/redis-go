@@ -128,8 +128,10 @@ func makeConnTx(ctx context.Context, reqs ...*Request) connTx {
 
 func (tx *connTx) close() {
 	for _, req := range tx.reqs {
-		if req.Args != nil {
-			req.Args.Close()
+		for _, cmd := range req.Cmds {
+			if cmd.Args != nil {
+				cmd.Args.Close()
+			}
 		}
 	}
 	close(tx.resch)
