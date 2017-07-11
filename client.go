@@ -140,6 +140,12 @@ func (c *Client) MultiQuery(ctx context.Context, cmds ...Command) []Args {
 		addr = "localhost:6379"
 	}
 
+	for _, cmd := range cmds {
+		if cmd.Cmd == "MULTI" || cmd.Cmd == "EXEC" {
+			return []Args{newArgsError(errorf("multiQuery cmds should not contain MULTI or EXEC"))}
+		}
+	}
+
 	multi := make([]Command, 0, len(cmds)+2)
 	multi = append(multi, Command{Cmd: "MULTI"})
 	multi = append(multi, cmds...)

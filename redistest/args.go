@@ -56,7 +56,7 @@ func testArgsReadValues(t *testing.T, setup setupArgs) {
 		v := reflect.New(reflect.TypeOf(expect))
 
 		if n := args.Len(); n != (len(expected) - i) {
-			t.Error("bad args lenght:", n)
+			t.Error("bad args length:", n)
 			return
 		}
 

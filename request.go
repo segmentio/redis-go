@@ -109,7 +109,7 @@ func (req *Request) Write(w io.Writer) error {
 }
 
 func (req *Request) getKey() (string, bool) {
-	// getKey should look at all the Command.key to figure out if the Request can be proxied.
+	// TODO: write parseKey
 	idx := 0
 
 	req.once.Do(func() {
@@ -129,5 +129,6 @@ func (req *Request) getKey() (string, bool) {
 }
 
 func (req *Request) parseKey() (string, bool) {
+	//TODO: Parse key should retrieve the key for the hashring
 	return "", false
 }
