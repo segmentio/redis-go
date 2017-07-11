@@ -23,7 +23,7 @@ test:
       --volume ${PWD}:/go/src/github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}
       --workdir /go/src/github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}
       segment/golang:latest
-      go.build='CGO_ENABLED=0 go build -ldflags \"-X main.version=${CIRCLE_TAGS:-$CIRCLE_SHA1}\" ./cmd/red'
+      go.build="CGO_ENABLED=0 go build -ldflags \"-X main.version=${CIRCLE_TAGS:-$CIRCLE_SHA1}\" ./cmd/red"
     - docker build -t segment/red .
 
 deployment:
