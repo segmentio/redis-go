@@ -96,6 +96,16 @@ func TestConnMulti(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
+	set := &Request{
+		Cmds: []Command{
+			{Cmd: "MULTI"},
+			{Cmd: "SET", Args: List("foo", "bar")},
+			{Cmd: "SET", Args: List("bob", "alice")},
+			{Cmd: "EXEC"},
+		},
+	}
+	tx := makeConnTx(ctx, set)
+
 	req1 := &Request{
 		Cmds: []Command{
 			{Cmd: "MULTI"},
@@ -115,13 +125,20 @@ func TestConnMulti(t *testing.T) {
 	}
 	tx2 := makeConnTx(ctx, req2)
 
+	c <- tx
 	c <- tx1
 	c <- tx2
 
-	res1, err := tx1.recv()
-
+	res, err := tx.recv()
 	if err != nil {
-		t.Error("third response:", err)
+		t.Error("multi set", err)
+		return
+	}
+	res.Close()
+
+	res1, err := tx1.recv()
+	if err != nil {
+		t.Error("multi get", err)
 		return
 	}
 
@@ -143,9 +160,8 @@ func TestConnMulti(t *testing.T) {
 	}
 
 	res2, err := tx2.recv()
-
 	if err != nil {
-		t.Error("second response:", err)
+		t.Error("multi set", err)
 		return
 	}
 	res2.Close()
