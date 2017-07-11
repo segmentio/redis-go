@@ -30,18 +30,18 @@ type ReverseProxy struct {
 
 // ServeRedis satisfies the Handler interface.
 func (proxy *ReverseProxy) ServeRedis(w ResponseWriter, r *Request) {
-	for _, cmd := range r.Cmds {
-		switch cmd.Cmd {
+	if len(r.Cmds) == 1 {
+		switch r.Cmds[0].Cmd {
 		case "SUBSCRIBE", "PSUBSCRIBE":
 			var channels []string
 			var channel string
 
-			for cmd.Args.Next(&channel) {
+			for r.Cmds[0].Args.Next(&channel) {
 				// TOOD: limit the number of channels read here
 				channels = append(channels, channel)
 			}
 
-			if err := cmd.Args.Close(); err != nil {
+			if err := r.Cmds[0].Args.Close(); err != nil {
 				proxy.log(err)
 				return
 			}
@@ -52,13 +52,11 @@ func (proxy *ReverseProxy) ServeRedis(w ResponseWriter, r *Request) {
 				return
 			}
 
-			proxy.servePubSub(conn, rw, cmd.Cmd, channels...)
-			// TOD: figure out a way to pass the connection back in regular mode
-
-		default:
-			proxy.serveRequest(w, r)
+			proxy.servePubSub(conn, rw, r.Cmds[0].Cmd, channels...)
+			// TOD0: figure out a way to pass the connection back in regular mode
 		}
 	}
+	proxy.serveRequest(w, r)
 }
 
 func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {

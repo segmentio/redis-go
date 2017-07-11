@@ -305,21 +305,25 @@ func (s *Server) serveConnection(ctx context.Context, c *serverConn, config serv
 }
 
 func (s *Server) serveRequest(res *responseWriter, req *Request) (err error) {
-	for _, cmd := range req.Cmds {
-		switch cmd.Cmd {
+	if len(req.Cmds) == 1 {
+		switch req.Cmds[0].Cmd {
 		case "PING":
 			msg := "PONG"
 			req.ParseArgs(&msg)
 			res.Write(msg)
-
-		default:
-			err = s.serveRedis(res, req)
-			cmd.Args.Close()
+			return
 		}
+	}
+	err = s.serveRedis(res, req)
+	if err == nil {
+		err = res.Flush()
+	}
+	for _, cmd := range req.Cmds {
+		cmd.Args.Close()
+	}
 
-		if err == nil {
-			err = res.Flush()
-		}
+	if err == nil {
+		err = res.Flush()
 	}
 
 	return
@@ -504,9 +508,11 @@ func readRequest(ctx context.Context, conn *serverConn, done chan<- error) (*Req
 
 	cmds := []Command{cmd}
 	if cmd.Cmd == "MULTI" {
+		argsDone := make(chan error, 1)
+
 		for cmd.Cmd != "EXEC" {
 			cmd.Args = nil
-			args = newByteArgsReader(&conn.p, nil)
+			args = newByteArgsReader(&conn.p, argsDone)
 
 			if !args.Next(&cmd.Cmd) {
 				break
@@ -524,6 +530,16 @@ func readRequest(ctx context.Context, conn *serverConn, done chan<- error) (*Req
 			cmd.Args = List(a...)
 			cmds = append(cmds, cmd)
 		}
+
+		go func() {
+			var err error
+			for range cmds {
+				if e := <-argsDone; err == nil && e != nil {
+					err = e
+				}
+			}
+			done <- err
+		}()
 	}
 
 	req := &Request{

@@ -2,6 +2,7 @@ package redis
 
 import (
 	"io"
+	"strings"
 
 	"github.com/segmentio/objconv/resp"
 )
@@ -48,7 +49,7 @@ func (res *Response) Close() error {
 }
 
 func newResponse(parser *resp.Parser, req *Request, done chan<- error) *Response {
-	argsDone := make(chan error, 1)
+	argsDone := make(chan error, len(req.Cmds))
 
 	args := make([]Args, len(req.Cmds))
 	for i := 0; i < len(req.Cmds); i++ {
@@ -60,12 +61,15 @@ func newResponse(parser *resp.Parser, req *Request, done chan<- error) *Response
 		for range req.Cmds {
 			if e := <-argsDone; err == nil && e != nil {
 				err = e
+				if redisErr, ok := e.(*resp.Error); ok {
+					if strings.HasPrefix(redisErr.Error(), "EXECABORT") {
+						break
+					}
+				}
 			}
 
 		}
-		if done != nil {
-			done <- err
-		}
+		done <- err
 	}()
 
 	return &Response{
