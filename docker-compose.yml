@@ -1,22 +1,52 @@
 version: '2'
 
 services:
+  consul:
+    image: "consul"
+    command: "-server -bootstrap-expect 1 -ui"
+    hostname: "localhost"
+    ports:
+      - "8400:8400"
+      - "8500:8500"
+      - "8600:53"
+
   redis-1:
     image: redis
     ports:
       - 6379:6379
+    environment:
+      SERVICE_TAGS: redis-cluster:test
 
   redis-2:
     image: redis
     ports:
       - 6380:6379
+    environment:
+      SERVICE_TAGS: redis-cluster:test
 
   redis-3:
     image: redis
     ports:
       - 6381:6379
+    environment:
+      SERVICE_TAGS: redis-cluster:test
 
   redis-4:
     image: redis
     ports:
       - 6382:6379
+    environment:
+      SERVICE_TAGS: redis-cluster:test
+
+  registrator:
+    image: gliderlabs/registrator
+    command: "-cleanup -ip 127.0.0.1 -resync 1 -retry-attempts 1000 -retry-interval 1000 consul://localhost:8500"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock
+    depends_on:
+      - consul
+      - redis-1
+      - redis-2
+      - redis-3
+      - redis-4
+    network_mode: host
