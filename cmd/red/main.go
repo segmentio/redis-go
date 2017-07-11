@@ -44,6 +44,10 @@ func main() {
 	}
 }
 
+// The signals function configures the program to receive the list of signals
+// given as argument. It returns a channel from which the program can receive
+// notifications that those signals arrived, and a teardown function that
+// removes the signal handlers when it is called.
 func signals(signals ...os.Signal) (<-chan os.Signal, func()) {
 	sigchan := make(chan os.Signal)
 	sigrecv := events.Signal(sigchan)
