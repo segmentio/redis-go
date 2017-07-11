@@ -17,17 +17,22 @@ import (
 	"github.com/segmentio/events"
 	eventslog "github.com/segmentio/events/log"
 	redis "github.com/segmentio/redis-go"
+	"github.com/segmentio/stats"
+	"github.com/segmentio/stats/datadog"
+	"github.com/segmentio/stats/redisstats"
 )
 
 type proxyConfig struct {
-	Bind     string `conf:"bind"     help:"Address on which the proxy is listening for incoming connections." validate:"nonzero"`
-	Upstream string `conf:"upstream" help:"URL or comma-separated list of upstream servers."                  validate:"nonzero"`
-	Debug    bool   `conf:"debug"    help:"Enable debug mode."`
+	Bind      string `conf:"bind"      help:"Address on which the proxy is listening for incoming connections, in ip:port format." validate:"nonzero"`
+	Upstream  string `conf:"upstream"  help:"URL or comma-separated list of upstream servers."                                     validate:"nonzero"`
+	Dogstatsd string `conf:"dogstatsd" help:"Address of the dogstatsd agent to send metrics to, in ip:port format."                validate:"nonzero"`
+	Debug     bool   `conf:"debug"     help:"Enable debug mode."`
 }
 
 func proxy(args []string) (err error) {
 	config := proxyConfig{
-		Bind: ":6479",
+		Bind:      ":6479",
+		Dogstatsd: "127.0.0.1:8125",
 	}
 
 	conf.LoadWith(&config, conf.Loader{
@@ -47,8 +52,17 @@ func proxy(args []string) (err error) {
 		}
 	}()
 
+	if len(config.Dogstatsd) != 0 {
+		stats.Register(datadog.NewClient(config.Dogstatsd))
+	}
+	defer stats.Flush()
+
 	lstn := makeListener(config.Bind)
 	server := makeProxyServer(config)
+
+	if config.Dogstatsd != "" {
+		server.Handler = redisstats.NewHandler(server.Handler)
+	}
 
 	sigchan, sigstop := signals(syscall.SIGINT, syscall.SIGTERM)
 	defer sigstop()
@@ -89,19 +103,24 @@ func makeProxyServer(config proxyConfig) *redis.Server {
 
 func makeReverseProxy(config proxyConfig, logger *log.Logger) redis.Handler {
 	return &redis.ReverseProxy{
-		Transport: makeTransport(),
+		Transport: makeTransport(config),
 		Registry:  makeRegistry(config.Upstream),
 		ErrorLog:  logger,
 	}
 }
 
-func makeTransport() redis.RoundTripper {
+func makeTransport(config proxyConfig) redis.RoundTripper {
 	// TODO: add metrics
-	return &redis.Transport{
+
+	transport := &redis.Transport{
 		ConnsPerHost: 4,
 		PingTimeout:  10 * time.Second,
 		PingInterval: 15 * time.Second,
 	}
+	if config.Dogstatsd != "" {
+		return redisstats.NewTransport(transport)
+	}
+	return transport
 }
 
 func makeRegistry(upstream string) (registry redis.ServerRegistry) {
