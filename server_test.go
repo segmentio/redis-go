@@ -313,6 +313,10 @@ func TestServer(t *testing.T) {
 }
 
 func newServer(handler redis.Handler) (srv *redis.Server, url string) {
+	return newServerTimeout(handler, 100*time.Millisecond)
+}
+
+func newServerTimeout(handler redis.Handler, timeout time.Duration) (srv *redis.Server, url string) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		panic(err)
@@ -320,9 +324,9 @@ func newServer(handler redis.Handler) (srv *redis.Server, url string) {
 
 	srv = &redis.Server{
 		Handler:      handler,
-		ReadTimeout:  100 * time.Millisecond,
-		WriteTimeout: 100 * time.Millisecond,
-		IdleTimeout:  100 * time.Millisecond,
+		ReadTimeout:  timeout,
+		WriteTimeout: timeout,
+		IdleTimeout:  timeout,
 		ErrorLog:     log.New(os.Stderr, "", 0),
 	}
 
