@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -628,3 +629,10 @@ var (
 	ErrWriteCalledNotEnoughTimes = errors.New("not enough calls to redis.ResponseWriter.Write")
 	ErrHijacked                  = errors.New("invalid use of a hijacked redis.ResponseWriter")
 )
+
+func splitNetworkAddress(s string) (string, string) {
+	if i := strings.Index(s, "://"); i >= 0 {
+		return s[:i], s[i+3:]
+	}
+	return "", s
+}
