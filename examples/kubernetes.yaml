@@ -12,7 +12,7 @@ spec:
     spec:
       containers:
       - name: red
-        image: segment/red:latest
+        image: segment/red:v0.3.0
         args: [
             "proxy",
             "-upstream", "consul://consul.default.svc.cluster.local:8500/redis?cluster=dev",
@@ -21,7 +21,9 @@ spec:
         ports:
         - containerPort: 6379
           protocol: TCP
+
 ---
+
 apiVersion: v1
 kind: Service
 metadata:
@@ -36,3 +38,26 @@ spec:
       targetPort: 6379
   selector:
     app: red
+
+---
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: red-test
+spec:
+  parallelism: 1
+  template:
+    metadata:
+      name: red-test
+    spec:
+      containers:
+        - name: red-test
+          image: segment/red:latest
+          args: [
+              "test",
+              "-proxy", "red:6479",
+              "-dogstatsd", "datadog-agent-datadog:8125",
+              "-runs", "100"
+          ]
+      restartPolicy: Never
