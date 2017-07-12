@@ -16,7 +16,7 @@ import (
 var (
 	// ErrDiscard is the error returned to indicate that transactions are
 	// discarded.
-	ErrDiscard = resp.NewError("EXECABORT the transcation was discarded")
+	ErrDiscard = resp.NewError("EXECABORT Transcation discarded.")
 )
 
 // Conn is a low-level API to represent client connections to redis.
@@ -272,6 +272,9 @@ func (c *Conn) readTxExecArgs(tx *TxArgs, n int) error {
 		if err := decoder.Decode(&error); err != nil {
 			return err
 		}
+		if error.Type() == "EXECABORT" {
+			error = ErrDiscard
+		}
 
 	case objconv.String:
 		if err := decoder.Decode(&status); err != nil {
@@ -290,7 +293,9 @@ func (c *Conn) readTxExecArgs(tx *TxArgs, n int) error {
 		for i := range tx.args {
 			a := tx.args[i].(*connArgs)
 			a.conn = nil
-			a.respErr = error
+			if a.respErr == nil {
+				a.respErr = error
+			}
 		}
 		tx.err = error
 	}
@@ -305,7 +310,7 @@ func (c *Conn) readTxArgs(tx *TxArgs, i int, n int) (int, error) {
 	case err != nil:
 
 	case error != nil:
-		tx.args[i] = &connArgs{conn: c, tx: tx, respErr: error}
+		tx.args[i] = &connArgs{tx: tx, respErr: error}
 
 	case status == "QUEUED":
 		tx.args[i] = &connArgs{conn: c, tx: tx, decoder: c.decoder}
