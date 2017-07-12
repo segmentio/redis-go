@@ -642,6 +642,8 @@ func readArgsEqual(t *testing.T, args redis.Args, error error, values ...string)
 		return
 	}
 
+	n := args.Len()
+
 	for i, v := range values {
 		var x string
 
@@ -665,10 +667,24 @@ func readArgsEqual(t *testing.T, args redis.Args, error error, values ...string)
 		v = nil
 	}
 
-	if err := args.Close(); !reflect.DeepEqual(err, error) {
+	err := args.Close()
+
+	if !reflect.DeepEqual(err, error) {
 		t.Error("bad error returned when closing the arguments:")
 		t.Logf("expected: %v", error)
 		t.Logf("found:    %v", err)
+	}
+
+	if n > 0 {
+		if _, ok := err.(*resp.Error); ok {
+			n-- // an error occurred, we couldn't read the value
+		}
+	}
+
+	if n != len(values) {
+		t.Error("bad arguments length:")
+		t.Log("expected:", len(values))
+		t.Log("found:   ", n)
 	}
 }
 
