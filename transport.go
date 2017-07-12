@@ -155,6 +155,9 @@ func (t *Transport) RoundTrip(req *Request) (*Response, error) {
 		network, address := splitNetworkAddress(req.Addr)
 		c, err := t.dialContext(ctx, network, address)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err = &net.OpError{Op: "dial", Net: "redis", Err: ctxErr}
+			}
 			return nil, err
 		}
 		conn = NewClientConn(c)
@@ -179,14 +182,7 @@ func (t *Transport) RoundTrip(req *Request) (*Response, error) {
 		laddr := conn.LocalAddr()
 		raddr := conn.RemoteAddr()
 		conn.Close()
-
-		err = &net.OpError{
-			Op:     "request",
-			Net:    "redis",
-			Source: laddr,
-			Addr:   raddr,
-			Err:    err,
-		}
+		err = &net.OpError{Op: "request", Net: "redis", Source: laddr, Addr: raddr, Err: err}
 	}
 
 	return res, err
