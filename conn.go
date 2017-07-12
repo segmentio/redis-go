@@ -515,11 +515,13 @@ func (args *connArgs) Close() error {
 	return err
 }
 
-func (args *connArgs) Len() int {
+func (args *connArgs) Len() (n int) {
 	args.mutex.Lock()
-	n := args.decoder.Len()
+	if args.conn != nil {
+		n = args.decoder.Len()
+	}
 	args.mutex.Unlock()
-	return n
+	return
 }
 
 func (args *connArgs) Next(dst interface{}) bool {
