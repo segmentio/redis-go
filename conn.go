@@ -164,34 +164,20 @@ func (c *Conn) Write(b []byte) (int, error) {
 	return n, err
 }
 
-/*
 // ReadCommands returns a new CommandReader which reads the next set of commands
 // from c.
 //
 // The new CommandReader holds the connection's read lock, which is released
 // only when its Close method is called, so a program must make sure to call
 // that method or the connection will be left in an unusable state.
-func (c *Conn) ReadCommands() (*CommandReader, error) {
+func (c *Conn) ReadCommands() *CommandReader {
 	c.rmutex.Lock()
 	c.resetDecoder()
-
-	cmd := ""
-	dec := c.decoder
-
-	if err := dec.Decode(&cmd); err != nil {
-		return nil, err
+	return &CommandReader{
+		conn:    c,
+		decoder: c.decoder,
 	}
-
-	r := &CommandReader{
-		cmd:   Command{Cmd: cmd},
-		conn:  c,
-		multi: cmd == "MULTI",
-	}
-
-	r.cmd.Args = newCmdArgsReader(dec, r)
-	return r, nil
 }
-*/
 
 // ReadArgs opens a stream to read arguments from the redis connection.
 //

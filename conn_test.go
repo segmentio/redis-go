@@ -3,7 +3,10 @@ package redis_test
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,177 +16,226 @@ import (
 )
 
 func TestConn(t *testing.T) {
-	tests := []struct {
-		scenario string
-		function func(*testing.T, *redis.Conn)
-		close    bool
-	}{
-		{
-			scenario: "cleanly closing a connection doesn't return any error",
-			function: testConnCloseHasNoError,
-			close:    true,
-		},
-		{
-			scenario: "reading after closing a connection returns an error",
-			function: testConnReadAfterClose,
-			close:    true,
-		},
-		{
-			scenario: "reading arguments after closing a connection returns an error",
-			function: testConnReadArgsAfterClose,
-			close:    true,
-		},
-		{
-			scenario: "writing after closing a connection returns an error",
-			function: testConnWriteAfterClose,
-			close:    true,
-		},
-		{
-			scenario: "writing commands after closing a connection returns an error",
-			function: testConnWriteCommandsAfterClose,
-			close:    true,
-		},
-		{
-			scenario: "writing an empty list of commands after closing a connection returns no errors",
-			function: testConnEmptyWriteCommandsAfterClose,
-			close:    true,
-		},
-		{
-			scenario: "writing an empty list of commands returns no errors",
-			function: testConnEmptyWriteCommandsBeforeClose,
-			close:    true,
-		},
-		{
-			scenario: "sending a ping command as a list of arguments expects a pong as response from the server",
-			function: testConnWriteArgsPingPong,
-		},
-		{
-			scenario: "sending a ping command as a list of commands expects a pong as response from the server",
-			function: testConnWriteCommandsPingPong,
-		},
-		{
-			scenario: "sending sequential SET and GET retrieves the expected value",
-			function: testConnSetAndGetSequential,
-		},
-		{
-			scenario: "sending a pipeline of SET and GET retrieves the expected value",
-			function: testConnSetAndGetPipeline,
-		},
-		{
-			scenario: "sending sequential SET for multiple keys and MGET retrieves the expected value",
-			function: testConnMultiSetAndMGetSequential,
-		},
-		{
-			scenario: "sending a pipeline of SET for multiple keys and MGET retrieves the expected value",
-			function: testConnMultiSetAndMGetPipeline,
-		},
-		{
-			scenario: "setting keys sequentially and discarding the responses leaves the connection in a stable state",
-			function: testConnSetAndDiscardResponsesSequential,
-		},
-		{
-			scenario: "setting keys in a pipeline and discarding the responses leaves the connection in a stable state",
-			function: testConnSetAndDiscardResponsesPipeline,
-		},
-		{
-			scenario: "sending an invalid command sequentially keeps the connection in a stable state",
-			function: testConnSetInvalidAndSetSequential,
-		},
-		{
-			scenario: "sending an invalid command in a pipeline keeps the connection in a stable state",
-			function: testConnSetInvalidAndSetPipeline,
-		},
-		{
-			scenario: "sending list commands properly returns sequence of values",
-			function: testConnListComands,
-		},
-		{
-			scenario: "sending an empty transaction returns no results and no errors",
-			function: testConnMultiExecEmpty,
-		},
-		{
-			scenario: "sending a transaction with one command returns the result and no errors",
-			function: testConnMultiExecSingle,
-		},
-		{
-			scenario: "sending a transaction with many commands returns the results and no errors",
-			function: testConnMultiExecMany,
-		},
-		{
-			scenario: "discarding an empty transaction returns an ErrDiscard error",
-			function: testConnMultiDiscardError,
-		},
-		{
-			scenario: "discarding a transaction with one command returns ErrDiscard errors",
-			function: testConnMultiDiscardSingle,
-		},
-		{
-			scenario: "discarding a transaction with many commands returns ErrDiscard errors",
-			function: testConnMultiDiscardMany,
-		},
-		{
-			scenario: "transactions with an invalid command are aborted but the connection remains open",
-			function: testConnMultiExecAbortBadCommand,
-		},
-		{
-			scenario: "transactions with multiple MULTI comands report errors but are valid",
-			function: testConnMultiExecManyMulti,
-		},
-		{
-			scenario: "transactions on list datastructures properly return sequences of values",
-			function: testConnMultiExecSubListArguments,
-		},
-	}
-
-	t.Run("short-lived", func(t *testing.T) {
+	t.Run("client", func(t *testing.T) {
 		t.Parallel()
 
-		for _, test := range tests {
-			testFunc := test.function
-			t.Run(test.scenario, func(t *testing.T) {
-				t.Parallel()
-				deadline := time.Now().Add(4 * time.Second)
-
-				ctx, cancel := context.WithDeadline(context.Background(), deadline)
-				defer cancel()
-
-				c, err := redis.DialContext(ctx, "tcp", "localhost:6379")
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer c.Close()
-
-				c.SetDeadline(deadline)
-				testFunc(t, c)
-			})
+		clientTests := []struct {
+			scenario string
+			function func(*testing.T, *redis.Conn)
+			close    bool
+		}{
+			{
+				scenario: "cleanly closing a connection doesn't return any error",
+				function: testConnCloseHasNoError,
+				close:    true,
+			},
+			{
+				scenario: "reading after closing a connection returns an error",
+				function: testConnReadAfterClose,
+				close:    true,
+			},
+			{
+				scenario: "reading arguments after closing a connection returns an error",
+				function: testConnReadArgsAfterClose,
+				close:    true,
+			},
+			{
+				scenario: "writing after closing a connection returns an error",
+				function: testConnWriteAfterClose,
+				close:    true,
+			},
+			{
+				scenario: "writing commands after closing a connection returns an error",
+				function: testConnWriteCommandsAfterClose,
+				close:    true,
+			},
+			{
+				scenario: "writing an empty list of commands after closing a connection returns no errors",
+				function: testConnEmptyWriteCommandsAfterClose,
+				close:    true,
+			},
+			{
+				scenario: "writing an empty list of commands returns no errors",
+				function: testConnEmptyWriteCommandsBeforeClose,
+				close:    true,
+			},
+			{
+				scenario: "sending a ping command as a list of arguments expects a pong as response from the server",
+				function: testConnWriteArgsPingPong,
+			},
+			{
+				scenario: "sending a ping command as a list of commands expects a pong as response from the server",
+				function: testConnWriteCommandsPingPong,
+			},
+			{
+				scenario: "sending sequential SET and GET retrieves the expected value",
+				function: testConnSetAndGetSequential,
+			},
+			{
+				scenario: "sending a pipeline of SET and GET retrieves the expected value",
+				function: testConnSetAndGetPipeline,
+			},
+			{
+				scenario: "sending sequential SET for multiple keys and MGET retrieves the expected value",
+				function: testConnMultiSetAndMGetSequential,
+			},
+			{
+				scenario: "sending a pipeline of SET for multiple keys and MGET retrieves the expected value",
+				function: testConnMultiSetAndMGetPipeline,
+			},
+			{
+				scenario: "setting keys sequentially and discarding the responses leaves the connection in a stable state",
+				function: testConnSetAndDiscardResponsesSequential,
+			},
+			{
+				scenario: "setting keys in a pipeline and discarding the responses leaves the connection in a stable state",
+				function: testConnSetAndDiscardResponsesPipeline,
+			},
+			{
+				scenario: "sending an invalid command sequentially keeps the connection in a stable state",
+				function: testConnSetInvalidAndSetSequential,
+			},
+			{
+				scenario: "sending an invalid command in a pipeline keeps the connection in a stable state",
+				function: testConnSetInvalidAndSetPipeline,
+			},
+			{
+				scenario: "sending list commands properly returns sequence of values",
+				function: testConnListComands,
+			},
+			{
+				scenario: "sending an empty transaction returns no results and no errors",
+				function: testConnMultiExecEmpty,
+			},
+			{
+				scenario: "sending a transaction with one command returns the result and no errors",
+				function: testConnMultiExecSingle,
+			},
+			{
+				scenario: "sending a transaction with many commands returns the results and no errors",
+				function: testConnMultiExecMany,
+			},
+			{
+				scenario: "discarding an empty transaction returns an ErrDiscard error",
+				function: testConnMultiDiscardError,
+			},
+			{
+				scenario: "discarding a transaction with one command returns ErrDiscard errors",
+				function: testConnMultiDiscardSingle,
+			},
+			{
+				scenario: "discarding a transaction with many commands returns ErrDiscard errors",
+				function: testConnMultiDiscardMany,
+			},
+			{
+				scenario: "transactions with an invalid command are aborted but the connection remains open",
+				function: testConnMultiExecAbortBadCommand,
+			},
+			{
+				scenario: "transactions with multiple MULTI comands report errors but are valid",
+				function: testConnMultiExecManyMulti,
+			},
+			{
+				scenario: "transactions on list datastructures properly return sequences of values",
+				function: testConnMultiExecSubListArguments,
+			},
 		}
-	})
 
-	t.Run("long-lived", func(t *testing.T) {
-		t.Parallel()
-		deadline := time.Now().Add(4 * time.Second)
+		t.Run("short-lived", func(t *testing.T) {
+			t.Parallel()
 
-		ctx, cancel := context.WithDeadline(context.Background(), deadline)
-		defer cancel()
-
-		c, err := redis.DialContext(ctx, "tcp", "localhost:6379")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer c.Close()
-
-		c.SetDeadline(deadline)
-
-		for _, test := range tests {
-			// In this test suite we're reusing the same connection to excercise
-			// long-lived scenarios, so we cannot run tests that close it or the
-			// next ones will fail.
-			if !test.close {
+			for _, test := range clientTests {
 				testFunc := test.function
 				t.Run(test.scenario, func(t *testing.T) {
+					t.Parallel()
+					deadline := time.Now().Add(4 * time.Second)
+
+					ctx, cancel := context.WithDeadline(context.Background(), deadline)
+					defer cancel()
+
+					c, err := redis.DialContext(ctx, "tcp", "localhost:6379")
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer c.Close()
+
+					c.SetDeadline(deadline)
 					testFunc(t, c)
 				})
 			}
+		})
+
+		t.Run("long-lived", func(t *testing.T) {
+			t.Parallel()
+			deadline := time.Now().Add(4 * time.Second)
+
+			ctx, cancel := context.WithDeadline(context.Background(), deadline)
+			defer cancel()
+
+			c, err := redis.DialContext(ctx, "tcp", "localhost:6379")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+
+			c.SetDeadline(deadline)
+
+			for _, test := range clientTests {
+				// In this test suite we're reusing the same connection to excercise
+				// long-lived scenarios, so we cannot run tests that close it or the
+				// next ones will fail.
+				if !test.close {
+					testFunc := test.function
+					t.Run(test.scenario, func(t *testing.T) {
+						testFunc(t, c)
+					})
+				}
+			}
+		})
+	})
+
+	t.Run("server", func(t *testing.T) {
+		t.Parallel()
+
+		serverTests := []struct {
+			scenario string
+			function func(*testing.T, *redis.Conn, *redis.Conn)
+		}{
+			{
+				scenario: "a single command written to a client connection is received by the server side",
+				function: testConnReadSingleCommand,
+			},
+			{
+				scenario: "multiple commands written to a client connection are received by the server side",
+				function: testConnReadManyCommands,
+			},
+			{
+				scenario: "a single empty transaction written to a client connection is received by the server side",
+				function: testConnReadSingleEmptyTransaction,
+			},
+			{
+				scenario: "a single non-empty transaction written to a client connection is received by the server side",
+				function: testConnReadSingleNonEmptyTransaction,
+			},
+			{
+				scenario: "multiple transactions written to a client connection are received by the server side",
+				function: testConnReadManyTransactions,
+			},
+		}
+
+		for _, test := range serverTests {
+			testFunc := test.function
+			t.Run(test.scenario, func(t *testing.T) {
+				c1, c2 := newTestConnPair()
+
+				client := redis.NewClientConn(c1)
+				server := redis.NewServerConn(c2)
+
+				defer client.Close()
+				defer server.Close()
+
+				testFunc(t, client, server)
+			})
 		}
 	})
 }
@@ -617,6 +669,145 @@ func testConnMultiExecSubListArguments(t *testing.T, c *redis.Conn) {
 	})
 }
 
+func testConnReadSingleCommand(t *testing.T, c *redis.Conn, s *redis.Conn) {
+	key := generateKey()
+
+	parallelConnPair(c, s,
+		func(c *redis.Conn) {
+			writeCommands(t, c,
+				redis.Command{Cmd: "SET", Args: redis.List(key, "A")},
+			)
+		},
+		func(s *redis.Conn) {
+			readCommands(t, s, nil,
+				redis.Command{Cmd: "SET", Args: redis.List(key, "A")},
+			)
+		},
+	)
+}
+
+func testConnReadManyCommands(t *testing.T, c *redis.Conn, s *redis.Conn) {
+	key1 := generateKey()
+	key2 := generateKey()
+	key3 := generateKey()
+	key4 := generateKey()
+	key5 := generateKey()
+
+	parallelConnPair(c, s,
+		func(c *redis.Conn) {
+			writeCommands(t, c,
+				redis.Command{Cmd: "SET", Args: redis.List(key1, "A")},
+				redis.Command{Cmd: "SET", Args: redis.List(key2, "B")},
+				redis.Command{Cmd: "SET", Args: redis.List(key3, "C")},
+				redis.Command{Cmd: "SET", Args: redis.List(key4, "D")},
+				redis.Command{Cmd: "SET", Args: redis.List(key5, "E")},
+			)
+		},
+		func(s *redis.Conn) {
+			readCommands(t, s, nil,
+				redis.Command{Cmd: "SET", Args: redis.List(key1, "A")},
+			)
+			readCommands(t, s, nil,
+				redis.Command{Cmd: "SET", Args: redis.List(key2, "B")},
+			)
+			readCommands(t, s, nil,
+				redis.Command{Cmd: "SET", Args: redis.List(key3, "C")},
+			)
+			readCommands(t, s, nil,
+				redis.Command{Cmd: "SET", Args: redis.List(key4, "D")},
+			)
+			readCommands(t, s, nil,
+				redis.Command{Cmd: "SET", Args: redis.List(key5, "E")},
+			)
+		},
+	)
+}
+
+func testConnReadSingleEmptyTransaction(t *testing.T, c *redis.Conn, s *redis.Conn) {
+	parallelConnPair(c, s,
+		func(c *redis.Conn) {
+			writeCommands(t, c,
+				redis.Command{Cmd: "MULTI"},
+				redis.Command{Cmd: "EXEC"},
+			)
+		},
+		func(s *redis.Conn) {
+			readCommands(t, s, nil,
+				redis.Command{Cmd: "MULTI"},
+				redis.Command{Cmd: "EXEC"},
+			)
+		},
+	)
+}
+
+func testConnReadSingleNonEmptyTransaction(t *testing.T, c *redis.Conn, s *redis.Conn) {
+	key := generateKey()
+
+	parallelConnPair(c, s,
+		func(c *redis.Conn) {
+			writeCommands(t, c,
+				redis.Command{Cmd: "MULTI"},
+				redis.Command{Cmd: "SET", Args: redis.List(key, "A")},
+				redis.Command{Cmd: "GET", Args: redis.List(key)},
+				redis.Command{Cmd: "EXEC"},
+			)
+		},
+		func(s *redis.Conn) {
+			readCommands(t, s, nil,
+				redis.Command{Cmd: "MULTI"},
+				redis.Command{Cmd: "SET", Args: redis.List(key, "A")},
+				redis.Command{Cmd: "GET", Args: redis.List(key)},
+				redis.Command{Cmd: "EXEC"},
+			)
+		},
+	)
+}
+
+func testConnReadManyTransactions(t *testing.T, c *redis.Conn, s *redis.Conn) {
+	key := generateKey()
+
+	parallelConnPair(c, s,
+		func(c *redis.Conn) {
+			writeCommands(t, c,
+				redis.Command{Cmd: "MULTI"},
+				redis.Command{Cmd: "SET", Args: redis.List(key, "A")},
+				redis.Command{Cmd: "GET", Args: redis.List(key)},
+				redis.Command{Cmd: "EXEC"},
+			)
+
+			writeCommands(t, c,
+				redis.Command{Cmd: "MULTI"},
+				redis.Command{Cmd: "EXEC"},
+			)
+
+			writeCommands(t, c,
+				redis.Command{Cmd: "MULTI"},
+				redis.Command{Cmd: "LRANGE", Args: redis.List(key, "0", "1")},
+				redis.Command{Cmd: "EXEC"},
+			)
+		},
+		func(s *redis.Conn) {
+			readCommands(t, s, nil,
+				redis.Command{Cmd: "MULTI"},
+				redis.Command{Cmd: "SET", Args: redis.List(key, "A")},
+				redis.Command{Cmd: "GET", Args: redis.List(key)},
+				redis.Command{Cmd: "EXEC"},
+			)
+
+			readCommands(t, s, nil,
+				redis.Command{Cmd: "MULTI"},
+				redis.Command{Cmd: "EXEC"},
+			)
+
+			readCommands(t, s, nil,
+				redis.Command{Cmd: "MULTI"},
+				redis.Command{Cmd: "LRANGE", Args: redis.List(key, "0", "1")},
+				redis.Command{Cmd: "EXEC"},
+			)
+		},
+	)
+}
+
 var connKeyTS = time.Now().Format(time.RFC3339)
 var connKeyID uint64
 
@@ -626,7 +817,102 @@ func generateKey() string {
 
 func writeCommands(t *testing.T, conn *redis.Conn, cmds ...redis.Command) {
 	if err := conn.WriteCommands(cmds...); err != nil {
-		t.Fatal(err)
+		panic(err)
+	}
+}
+
+func readCommands(t *testing.T, conn *redis.Conn, expectErr error, cmds ...redis.Command) {
+	r := conn.ReadCommands()
+	c := redis.Command{}
+	i := 0
+
+	for r.Read(&c) {
+		if i > len(cmds) {
+			t.Error("too many commands read from the connection:", c.Cmd)
+			t.Log("expected:", len(cmds))
+			t.Log("found:   ", i)
+			i++
+			c.Args.Close()
+			continue
+		}
+
+		if c.Cmd != cmds[i].Cmd {
+			t.Error("bad command found at index", i)
+			t.Logf("expected: %s", cmds[i].Cmd)
+			t.Logf("found:    %s", c.Cmd)
+		}
+
+		a1 := c.Args
+		a2 := cmds[i].Args
+
+		for {
+			var v1 interface{}
+			var v2 interface{}
+			var ok1 bool
+			var ok2 bool
+
+			if a2 != nil {
+				ok2 = a2.Next(&v2)
+			}
+
+			if v2 != nil {
+				v1 = reflect.New(reflect.TypeOf(v2)).Interface()
+			} else {
+				var x interface{}
+				v1 = &x
+			}
+
+			ok1 = a1.Next(v1)
+			if v1 != nil {
+				v1 = reflect.ValueOf(v1).Elem().Interface()
+			}
+
+			if ok1 != ok2 {
+				t.Errorf("number of arguments mismatch in %s command at index %d", c.Cmd, i)
+				t.Log("expected:", ok2)
+				t.Log("found:   ", ok1)
+			}
+
+			if !ok1 || !ok2 {
+				break
+			}
+
+			if !reflect.DeepEqual(v1, v2) {
+				t.Errorf("bad value reader from the %s command arguments at index %d", c.Cmd, i)
+				t.Logf("expected: %#v", v2)
+				t.Logf("found:    %#v", v1)
+			}
+		}
+
+		var err1 error
+		var err2 error
+
+		if a1 != nil {
+			err1 = a1.Close()
+		}
+		if a2 != nil {
+			err2 = a2.Close()
+		}
+
+		if !reflect.DeepEqual(err1, err2) {
+			t.Errorf("bad error returned when closing the arugment list of %s at index %d", c.Cmd, i)
+			t.Logf("expected: %v", err2)
+			t.Logf("found:    %v", err1)
+		}
+
+		i++
+	}
+
+	if i < len(cmds) {
+		t.Error("not enough commands read from the connection")
+		t.Log("expected:", len(cmds))
+		t.Log("found:   ", i)
+	}
+
+	if err := r.Close(); !reflect.DeepEqual(err, expectErr) {
+		t.Error("bad error returned when closing the command reader:")
+		t.Logf("expected: %v", expectErr)
+		t.Logf("found:    %v", err)
 	}
 }
 
@@ -698,3 +984,52 @@ func withTxArgs(t *testing.T, c *redis.Conn, n int, error error, do func(*redis.
 		t.Logf("found:    %v", err)
 	}
 }
+
+func parallelConnPair(c *redis.Conn, s *redis.Conn, cf func(*redis.Conn), sf func(*redis.Conn)) {
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
+	do := func(conn *redis.Conn, connFunc func(*redis.Conn)) {
+		defer wg.Done()
+		defer conn.Close()
+		connFunc(conn)
+	}
+
+	go do(c, cf)
+	go do(s, sf)
+
+	wg.Wait()
+}
+
+type testConn struct {
+	*io.PipeReader
+	*io.PipeWriter
+}
+
+func newTestConnPair() (*testConn, *testConn) {
+	r1, w1 := io.Pipe()
+	r2, w2 := io.Pipe()
+
+	c1 := &testConn{
+		PipeReader: r1,
+		PipeWriter: w2,
+	}
+
+	c2 := &testConn{
+		PipeReader: r2,
+		PipeWriter: w1,
+	}
+
+	return c1, c2
+}
+
+func (c *testConn) Close() error {
+	c.PipeWriter.Close()
+	return nil
+}
+
+func (c *testConn) SetDeadline(t time.Time) error      { return nil }
+func (c *testConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *testConn) SetWriteDeadline(t time.Time) error { return nil }
+func (c *testConn) LocalAddr() net.Addr                { return nil }
+func (c *testConn) RemoteAddr() net.Addr               { return nil }
