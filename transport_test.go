@@ -27,7 +27,7 @@ func TestTransport(t *testing.T) {
 	t.Run("RoundTrip", func(t *testing.T) {
 		t.Parallel()
 
-		var transport = Transport{ConnsPerHost: 3}
+		var transport = Transport{MaxIdleConns: 3}
 		var wg sync.WaitGroup
 
 		for i := 0; i != 10; i++ {
