@@ -37,6 +37,7 @@ func TestTransport(t *testing.T) {
 	for _, test := range tests {
 		testFunc := test.function
 		t.Run(test.scenario, func(t *testing.T) {
+			t.Parallel()
 			testFunc(t)
 		})
 	}
