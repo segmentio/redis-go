@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -151,7 +152,8 @@ func (t *Transport) RoundTrip(req *Request) (*Response, error) {
 
 	conn := t.pool.getConn(req.Addr)
 	if conn == nil {
-		c, err := t.dialContext(ctx, "tcp", req.Addr)
+		network, address := splitNetworkAddress(req.Addr)
+		c, err := t.dialContext(ctx, network, address)
 		if err != nil {
 			return nil, err
 		}
@@ -296,4 +298,11 @@ func (a *transportArgs) Close() error {
 
 	a.once.Do(func() { a.pool.putConn(a.host, a.conn) })
 	return err
+}
+
+func splitNetworkAddress(s string) (string, string) {
+	if i := strings.Index(s, "://"); i >= 0 {
+		return s[:i], s[i+3:]
+	}
+	return "tcp", s
 }
