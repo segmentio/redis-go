@@ -231,6 +231,10 @@ func TestConn(t *testing.T) {
 				client := redis.NewClientConn(c1)
 				server := redis.NewServerConn(c2)
 
+				deadline := time.Now().Add(4 * time.Second)
+				client.SetDeadline(deadline)
+				server.SetDeadline(deadline)
+
 				defer client.Close()
 				defer server.Close()
 
