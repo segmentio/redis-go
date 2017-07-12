@@ -31,9 +31,6 @@ type Conn struct {
 	wbuffer bufio.Writer
 	encoder objconv.StreamEncoder
 	emitter resp.ClientEmitter
-
-	cancelOnce sync.Once
-	cancelFunc context.CancelFunc
 }
 
 // Dial connects to the redis server at the given address, returing a new client
@@ -57,10 +54,9 @@ func DialContext(ctx context.Context, network string, address string) (*Conn, er
 // connections.
 func NewClientConn(conn net.Conn) *Conn {
 	c := &Conn{
-		conn:       conn,
-		rbuffer:    *bufio.NewReader(conn),
-		wbuffer:    *bufio.NewWriter(conn),
-		cancelFunc: func() {},
+		conn:    conn,
+		rbuffer: *bufio.NewReader(conn),
+		wbuffer: *bufio.NewWriter(conn),
 	}
 	c.parser.Reset(&c.rbuffer)
 	c.emitter.Reset(&c.wbuffer)
@@ -73,10 +69,9 @@ func NewClientConn(conn net.Conn) *Conn {
 // connections.
 func NewServerConn(conn net.Conn) *Conn {
 	c := &Conn{
-		conn:       conn,
-		rbuffer:    *bufio.NewReader(conn),
-		wbuffer:    *bufio.NewWriter(conn),
-		cancelFunc: func() {},
+		conn:    conn,
+		rbuffer: *bufio.NewReader(conn),
+		wbuffer: *bufio.NewWriter(conn),
 	}
 	c.parser.Reset(&c.rbuffer)
 	c.emitter.Reset(&c.wbuffer)
@@ -87,7 +82,6 @@ func NewServerConn(conn net.Conn) *Conn {
 
 // Close closes the kafka connection.
 func (c *Conn) Close() error {
-	c.cancelOnce.Do(c.cancelFunc)
 	return c.conn.Close()
 }
 

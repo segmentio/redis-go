@@ -292,8 +292,7 @@ func (s *Server) serveConnection(ctx context.Context, c *Conn, config serverConf
 }
 
 func (s *Server) serveCommand(c *Conn, cmd *Command, config serverConfig) (err error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	c.cancelFunc = cancel
+	ctx, cancel := context.WithTimeout(context.Background(), config.readTimeout)
 
 	req := &Request{
 		Cmd:     cmd.Cmd,
@@ -307,7 +306,6 @@ func (s *Server) serveCommand(c *Conn, cmd *Command, config serverConfig) (err e
 	}
 
 	err = s.serveRequest(res, req)
-	c.cancelFunc = func() {}
 	cmd.Args.Close()
 	cancel()
 	return
