@@ -4,8 +4,11 @@ import (
 	"context"
 	"net"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/segmentio/objconv/resp"
 )
 
 // RoundTripper is an interface representing the ability to execute a single
@@ -50,11 +53,13 @@ type Transport struct {
 	// If DialContext is nil, then the transport dials using package net.
 	DialContext func(context.Context, string, string) (net.Conn, error)
 
-	// ConnsPerHost controls the number of connections that are opened to each
-	// host that is accessed by the transport.
-	//
-	// The default value used by this traansport is one.
-	ConnsPerHost int
+	// MaxIdleConns controls the maximum number of idle (keep-alive) connections
+	// across all hosts. Zero means no limit.
+	MaxIdleConns int
+
+	// MaxIdleConnsPerHost, if non-zero, controls the maximum idle
+	// (keep-alive) connections to keep per-host. Zero means no limit.
+	MaxIdleConnsPerHost int
 
 	// PingInterval is the amount of time between pings that the transport sends
 	// to the hosts it connects to.
@@ -64,23 +69,16 @@ type Transport struct {
 	// to ping requests before discarding connections.
 	PingTimeout time.Duration
 
-	mutex sync.RWMutex
-	conns map[string]conn
+	once sync.Once
+	pool *connPool
 }
 
 // CloseIdleConnections closes any connections which were previously connected
 // from previous requests but are now sitting idle. It does not interrupt any
 // connections currently in use.
 func (t *Transport) CloseIdleConnections() {
-	var conns map[string]conn
-
-	t.mutex.Lock()
-	conns, t.conns = t.conns, nil
-	t.mutex.Unlock()
-
-	for _, c := range conns {
-		c.close()
-	}
+	t.once.Do(t.init)
+	t.pool.closeIdleConnections()
 }
 
 // Subscribe uses the transport's configuration to open a connection to a redis
@@ -106,7 +104,7 @@ func (t *Transport) sub(ctx context.Context, network string, address string, com
 		defer cancel()
 	}
 
-	conn, err := t.dialContext()(ctx, network, address)
+	conn, err := t.dialContext(ctx, network, address)
 	if err != nil {
 		return nil, err
 	}
@@ -145,67 +143,105 @@ func (t *Transport) sub(ctx context.Context, network string, address string, com
 //
 // For higher-level Redis client support, see Exec, Query, and the Client type.
 func (t *Transport) RoundTrip(req *Request) (*Response, error) {
-	ctx := req.Context
+	t.once.Do(t.init)
 
+	ctx := req.Context
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	tx := makeConnTx(ctx, req)
-
-	if err := t.conn(req.Addr).send(tx); err != nil {
-		return nil, err
-	}
-
-	return tx.recv()
-}
-
-func (t *Transport) conn(addr string) conn {
-	t.mutex.RLock()
-	c := t.conns[addr]
-	t.mutex.RUnlock()
-
-	if c == nil {
-		t.mutex.Lock()
-
-		if c = t.conns[addr]; c == nil {
-			if t.conns == nil {
-				t.conns = make(map[string]conn)
-				runtime.SetFinalizer(t, (*Transport).CloseIdleConnections)
+	conn := t.pool.getConn(req.Addr)
+	if conn == nil {
+		network, address := splitNetworkAddress(req.Addr)
+		c, err := t.dialContext(ctx, network, address)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err = &net.OpError{Op: "dial", Net: "redis", Err: ctxErr}
 			}
-			c = makePool(t.poolConfig(addr))
-			t.conns[addr] = c
+			return nil, err
 		}
-
-		t.mutex.Unlock()
+		conn = NewClientConn(c)
 	}
 
-	return c
+	resch := make(chan *Response, 1)
+	errch := make(chan error, 1)
+
+	go t.roundTrip(conn, req, resch, errch)
+
+	var res *Response
+	var err error
+
+	select {
+	case res = <-resch:
+	case err = <-errch:
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+
+	if err != nil {
+		laddr := conn.LocalAddr()
+		raddr := conn.RemoteAddr()
+		conn.Close()
+		err = &net.OpError{Op: "request", Net: "redis", Source: laddr, Addr: raddr, Err: err}
+	}
+
+	return res, err
 }
 
-func (t *Transport) poolConfig(addr string) poolConfig {
-	return poolConfig{
-		addr:         addr,
-		size:         t.connsPerHost(),
-		dialContext:  t.dialContext(),
-		pingTimeout:  t.pingTimeout(),
-		pingInterval: t.pingInterval(),
+func (t *Transport) roundTrip(conn *Conn, req *Request, resch chan<- *Response, errch chan<- error) {
+	if err := conn.WriteCommands(Command{Cmd: req.Cmd, Args: req.Args}); err != nil {
+		if req.Args != nil {
+			req.Args.Close()
+		}
+		errch <- err
+		return
+	}
+
+	args := conn.ReadArgs()
+	args.Len() // waits for the first bytes of the response to arrive
+
+	resch <- &Response{
+		Args: &transportArgs{
+			Args: args,
+			host: req.Addr,
+			conn: conn,
+			pool: t.pool,
+		},
+		Request: req,
 	}
 }
 
-func (t *Transport) connsPerHost() int {
-	if connsPerHost := t.ConnsPerHost; connsPerHost != 0 {
-		return connsPerHost
+func (t *Transport) init() {
+	pool := &connPool{
+		maxIdleConns:        t.MaxIdleConns,
+		maxIdleConnsPerHost: t.MaxIdleConnsPerHost,
 	}
-	return 1
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func(pingInterval time.Duration, pingTimeout time.Duration) {
+		ticker := time.NewTicker(pingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+			case <-ctx.Done():
+				return
+			}
+			pool.pingIdleConnections(pingTimeout)
+		}
+	}(t.pingInterval(), t.pingTimeout())
+
+	runtime.SetFinalizer(pool, func(*connPool) { cancel() })
+	t.pool = pool
 }
 
-func (t *Transport) dialContext() func(context.Context, string, string) (net.Conn, error) {
+func (t *Transport) dialContext(ctx context.Context, network string, address string) (net.Conn, error) {
 	dialContext := t.DialContext
 	if dialContext == nil {
 		dialContext = DefaultDialer.DialContext
 	}
-	return dialContext
+	return dialContext(ctx, network, address)
 }
 
 func (t *Transport) pingTimeout() time.Duration {
@@ -226,7 +262,6 @@ func (t *Transport) pingInterval() time.Duration {
 // DefaultClient. It establishes network connections as needed and caches them
 // for reuse by subsequent calls.
 var DefaultTransport RoundTripper = &Transport{
-	ConnsPerHost: 4,
 	PingTimeout:  10 * time.Second,
 	PingInterval: 15 * time.Second,
 }
@@ -237,4 +272,33 @@ var DefaultDialer = &net.Dialer{
 	Timeout:   10 * time.Second,
 	KeepAlive: 30 * time.Second,
 	DualStack: true,
+}
+
+type transportArgs struct {
+	Args
+	host string
+	conn *Conn
+	pool *connPool
+	once sync.Once
+}
+
+func (a *transportArgs) Close() error {
+	err := a.Args.Close()
+
+	if err != nil {
+		if _, stable := err.(*resp.Error); !stable {
+			a.once.Do(func() { a.conn.Close() })
+			return err
+		}
+	}
+
+	a.once.Do(func() { a.pool.putConn(a.host, a.conn) })
+	return err
+}
+
+func splitNetworkAddress(s string) (string, string) {
+	if i := strings.Index(s, "://"); i >= 0 {
+		return s[:i], s[i+3:]
+	}
+	return "tcp", s
 }

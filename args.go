@@ -126,6 +126,72 @@ func (m *multiArgs) Next(dst interface{}) bool {
 	return true
 }
 
+// TxArgs is a type returned by Conn.ReadTxArgs to produce the list of values
+// received in response to a transaction.
+type TxArgs struct {
+	mutex sync.Mutex
+	conn  *Conn
+	args  []Args
+	err   error
+}
+
+// Close closes tx, allowing the connection to be used for furtherreturning
+func (tx *TxArgs) Close() error {
+	tx.mutex.Lock()
+
+	for _, arg := range tx.args {
+		if err := arg.Close(); err != nil {
+			if tx.err == nil {
+				tx.err = err
+			}
+
+			if _, stable := err.(*resp.Error); !stable {
+				if tx.conn != nil {
+					tx.conn.Close()
+				}
+				// always report fatal error over protocol errors
+				tx.err = err
+			}
+		}
+	}
+
+	if tx.conn != nil {
+		tx.conn.rmutex.Unlock()
+		tx.conn = nil
+	}
+
+	err := tx.err
+	tx.mutex.Unlock()
+	return err
+}
+
+// Len returns the number of argument lists remaining to be read from the
+// transaction.
+func (tx *TxArgs) Len() int {
+	tx.mutex.Lock()
+	n := len(tx.args)
+	tx.mutex.Unlock()
+	return n
+}
+
+// Next returns the next argument list of the transaction, or nil if they have
+// all been consumed.
+//
+// When the returned value is not nil the program must call its Close method
+// before calling any other function of the TxArgs value.
+func (tx *TxArgs) Next() Args {
+	tx.mutex.Lock()
+
+	if len(tx.args) == 0 {
+		tx.mutex.Unlock()
+		return nil
+	}
+
+	args := tx.args[0]
+	tx.args = tx.args[1:]
+	return args
+}
+
 type argsError struct {
 	err error
 }
