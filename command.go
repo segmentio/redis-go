@@ -1,5 +1,15 @@
 package redis
 
+import (
+	"fmt"
+	"reflect"
+	"strconv"
+	"sync"
+
+	"github.com/segmentio/objconv"
+	"github.com/segmentio/objconv/objutil"
+)
+
 // A Command represent a Redis command used withing a Request.
 type Command struct {
 	// Cmd is the Redis command that's being sent with this request.
@@ -14,32 +24,73 @@ type Command struct {
 	Args Args
 }
 
-/*
+// CommandReader is a type produced by the Conn.ReadCommands method to read a
+// single command or a sequence of commands belonging to the same transaction.
 type CommandReader struct {
-	mutex sync.Mutex
-	conn  *Conn
-	cmd   Command
-	multi bool
-	done  bool
+	mutex   sync.Mutex
+	conn    *Conn
+	decoder objconv.StreamDecoder
+	multi   bool
+	done    bool
+	err     error
 }
 
+// Close closes the comand reader, it must be called when all commands have been
+// read from the reader in order to release the parent connection's read lock.
 func (r *CommandReader) Close() error {
 	r.mutex.Lock()
+	err := r.err
 
-	r.mutex.Unlock()
-	return
-}
-
-func (r *ComandReader) Next(cmd *Command) bool {
-	ok := false
-	r.mutex.Lock()
-
-	if !r.done {
-
+	if r.conn != nil {
+		if !r.done || err != nil {
+			r.conn.Close()
+		}
+		r.conn.rmutex.Unlock()
+		r.conn = nil
 	}
 
+	r.done = true
 	r.mutex.Unlock()
-	return ok
+	return err
+}
+
+// Read reads the next command from the command reader, filling cmd with the
+// name and list of arguments. The command's arguments Close method must be
+// called in order to release the reader's lock before any other methods of
+// the reader are called.
+//
+// The method returns true if a command could be read, or false if there were
+// no more commands to read from the reader.
+func (r *CommandReader) Read(cmd *Command) bool {
+	*cmd = Command{}
+	r.mutex.Lock()
+	r.resetDecoder()
+
+	if r.done {
+		r.mutex.Unlock()
+		return false
+	}
+
+	if err := r.decoder.Decode(&cmd.Cmd); err != nil {
+		r.err = r.decoder.Err()
+		r.done = true
+		r.mutex.Unlock()
+		return false
+	}
+
+	if r.multi {
+		r.done = r.multi && (cmd.Cmd == "EXEC" || cmd.Cmd == "DISCARD")
+	} else {
+		r.multi = cmd.Cmd == "MULTI"
+		r.done = !r.multi
+	}
+
+	cmd.Args = newCmdArgsReader(r.decoder, r)
+	return true
+}
+
+func (r *CommandReader) resetDecoder() {
+	r.decoder = objconv.StreamDecoder{Parser: r.decoder.Parser}
 }
 
 func newCmdArgsReader(d objconv.StreamDecoder, r *CommandReader) *cmdArgsReader {
@@ -47,7 +98,6 @@ func newCmdArgsReader(d objconv.StreamDecoder, r *CommandReader) *cmdArgsReader 
 	args.b = args.a[:0]
 	return args
 }
-
 
 type cmdArgsReader struct {
 	once sync.Once
@@ -60,13 +110,13 @@ type cmdArgsReader struct {
 
 func (args *cmdArgsReader) Close() error {
 	args.once.Do(func() {
+		var err error
+
 		for args.dec.Decode(nil) == nil {
 			// discard all remaining values
 		}
 
-		err := args.dec.Err()
-
-		if args.err == nil {
+		if err = args.dec.Err(); args.err == nil {
 			args.err = err
 		}
 
@@ -74,7 +124,7 @@ func (args *cmdArgsReader) Close() error {
 		// read the next command.
 		if args.r != nil {
 			args.r.err = err
-			args.r.mu.Unlock()
+			args.r.mutex.Unlock()
 		}
 	})
 	return args.err
@@ -94,7 +144,15 @@ func (args *cmdArgsReader) Next(val interface{}) bool {
 		return false
 	}
 
-	if args.err = args.dec.Decode(val); args.err != nil {
+	if args.dec.Len() != 0 {
+		if t, _ := args.dec.Parser.ParseType(); t == objconv.Error {
+			args.dec.Decode(&args.err)
+			return false
+		}
+	}
+
+	if err := args.dec.Decode(&args.b); err != nil {
+		args.err = args.dec.Err()
 		return false
 	}
 
@@ -187,4 +245,3 @@ func (args *cmdArgsReader) parseValue(v reflect.Value) error {
 	v.Set(reflect.ValueOf(append(make([]byte, 0, len(args.b)), args.b...)))
 	return nil
 }
-*/
