@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -38,7 +39,6 @@ func TestReverseProxyHash(t *testing.T) {
 	transport := &redis.Transport{}
 
 	full, onedowns := makeServerList()
-	t.Logf("makeServerList(): full='%v', onedowns = '%v'", full, onedowns)
 
 	proxy := &redis.ReverseProxy{
 		Transport: transport,
@@ -51,18 +51,24 @@ func TestReverseProxyHash(t *testing.T) {
 	client := &redis.Client{Addr: u.Host, Transport: transport}
 
 	// full backend - write n keys
-	n := 16
+	n := 160
 	keyTempl := "redis-go.test.rphash.%d"
+	waiter := &sync.WaitGroup{}
 	for i := 0; i < n; i++ {
 		key := fmt.Sprintf(keyTempl, i)
 		val := "1"
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := client.Exec(ctx, "SET", key, val); err != nil {
-			t.Error(err)
-			return
-		}
+		waiter.Add(1)
+		go func(key, val string) {
+			defer waiter.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := client.Exec(ctx, "SET", key, val); err != nil {
+				t.Error(err)
+				return
+			}
+		}(key, val)
 	}
+	waiter.Wait()
 
 	// full backend - read n back
 	numHits, numMisses, err := measHitMiss(t, client, n, keyTempl)
@@ -98,6 +104,7 @@ func TestReverseProxyHash(t *testing.T) {
 		assert.True(t, numHits > 0, "One down - some hit")
 		assert.True(t, numMisses < n, "One down - not all missed")
 		assert.True(t, numMisses > 0, "One down - some missed")
+		assert.Equal(t, n, numHits+numMisses, "One down - hits and misses adds up")
 		accHits += numHits
 		accMisses += numMisses
 	}
@@ -105,22 +112,40 @@ func TestReverseProxyHash(t *testing.T) {
 }
 
 func measHitMiss(t *testing.T, client *redis.Client, n int, keyTempl string) (numHits, numMisses int, err error) {
-	for i := 0; i < n; i++ {
+	type tresult struct {
+		hit bool
+		err error
+	}
+	results := make(chan tresult, n)
+	waiter := &sync.WaitGroup{}
+	for i := 0; i < cap(results); i++ {
 		key := fmt.Sprintf(keyTempl, i)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		args := client.Query(ctx, "GET", key)
-		for j := 0; j < args.Len(); j++ {
+		waiter.Add(1)
+		go func(key string, rq chan<- tresult) {
+			defer waiter.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			args := client.Query(ctx, "GET", key)
+			assert.Equal(t, 1, args.Len(), "GET returns a single value")
 			var v string
 			args.Next(&v)
-			if v == "1" {
-				numHits++
+			if err := args.Close(); err != nil {
+				rq <- tresult{err: err}
 			} else {
-				numMisses++
+				rq <- tresult{hit: v == "1"}
 			}
+		}(key, results)
+	}
+	waiter.Wait()
+	close(results)
+	for result := range results {
+		if result.err != nil {
+			return 0, 0, result.err
 		}
-		if err := args.Close(); err != nil {
-			return 0, 0, err
+		if result.hit {
+			numHits++
+		} else {
+			numMisses++
 		}
 	}
 	return
