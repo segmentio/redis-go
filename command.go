@@ -15,63 +15,44 @@ type Command struct {
 }
 
 /*
-// CommandReader is type used to read commands from a redis connection.
 type CommandReader struct {
-	conn *Conn
-	dec  objconv.StreamDecoder
-	len  int
-	mu   sync.Mutex
-	err  error
+	mutex sync.Mutex
+	conn  *Conn
+	cmd   Command
+	multi bool
+	done  bool
 }
 
-// Close closes the command reader, calls to ReadCommand after calling Close
-// will always return an error indicating that the reader has been closed.
 func (r *CommandReader) Close() error {
-	r.mu.Lock()
-	err := r.err
+	r.mutex.Lock()
 
-	if r.conn != nil {
-		if err != nil {
-			r.conn.Close()
-		}
-		r.conn.rmutex.Unlock()
-		r.conn = nil
-	}
-
-	r.mu.Unlock()
-	return err
-}
-
-// ReadCommand reads the next command from the reader into cmd, returning true
-// if a command could be read, false otherwise. If an error was detected it will
-// be returned by the call to Close.
-//
-// The program has to call Close on the list of arguments of the command before
-// calling ReadCommand again.
-func (r *CommandReader) ReadCommand(cmd *Command) bool {
-	*cmd = Command{}
-
-	if r.err != nil {
-		return false
-	}
-
-	if r.len == 0 {
-		return false
-	}
-
+	r.mutex.Unlock()
 	return
 }
 
-func newCmdArgsReader(d *objconv.StreamDecoder, r *CommandReader) *cmdArgsReader {
+func (r *ComandReader) Next(cmd *Command) bool {
+	ok := false
+	r.mutex.Lock()
+
+	if !r.done {
+
+	}
+
+	r.mutex.Unlock()
+	return ok
+}
+
+func newCmdArgsReader(d objconv.StreamDecoder, r *CommandReader) *cmdArgsReader {
 	args := &cmdArgsReader{dec: d, r: r}
 	args.b = args.a[:0]
 	return args
 }
 
+
 type cmdArgsReader struct {
 	once sync.Once
 	err  error
-	dec  *objconv.StreamDecoder
+	dec  objconv.StreamDecoder
 	r    *CommandReader
 	b    []byte
 	a    [128]byte

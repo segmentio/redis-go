@@ -689,11 +689,7 @@ func readArgsEqual(t *testing.T, args redis.Args, error error, values ...string)
 }
 
 func withTxArgs(t *testing.T, c *redis.Conn, n int, error error, do func(*redis.TxArgs)) {
-	tx, err := c.ReadTxArgs(n)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	tx := c.ReadTxArgs(n)
 	do(tx)
 
 	if err := tx.Close(); !reflect.DeepEqual(err, error) {
