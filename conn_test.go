@@ -3,6 +3,7 @@ package redis_test
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,34 +16,42 @@ func TestConn(t *testing.T) {
 	tests := []struct {
 		scenario string
 		function func(*testing.T, *redis.Conn)
+		close    bool
 	}{
 		{
 			scenario: "cleanly closing a connection doesn't return any error",
 			function: testConnCloseHasNoError,
+			close:    true,
 		},
 		{
 			scenario: "reading after closing a connection returns an error",
 			function: testConnReadAfterClose,
+			close:    true,
 		},
 		{
 			scenario: "reading arguments after closing a connection returns an error",
 			function: testConnReadArgsAfterClose,
+			close:    true,
 		},
 		{
 			scenario: "writing after closing a connection returns an error",
 			function: testConnWriteAfterClose,
+			close:    true,
 		},
 		{
 			scenario: "writing commands after closing a connection returns an error",
 			function: testConnWriteCommandsAfterClose,
+			close:    true,
 		},
 		{
 			scenario: "writing an empty list of commands after closing a connection returns no errors",
 			function: testConnEmptyWriteCommandsAfterClose,
+			close:    true,
 		},
 		{
 			scenario: "writing an empty list of commands returns no errors",
 			function: testConnEmptyWriteCommandsBeforeClose,
+			close:    true,
 		},
 		{
 			scenario: "sending a ping command as a list of arguments expects a pong as response from the server",
@@ -97,30 +106,70 @@ func TestConn(t *testing.T) {
 			function: testConnMultiExecMany,
 		},
 		{
-			scenario: "discarding an empty transaction returns an EXECABORT error",
+			scenario: "discarding an empty transaction returns an ErrDiscard error",
 			function: testConnMultiDiscardError,
+		},
+		{
+			scenario: "discarding a transaction with one command returns ErrDiscard errors",
+			function: testConnMultiDiscardSingle,
+		},
+		{
+			scenario: "discarding a transaction with many commands returns ErrDiscard errors",
+			function: testConnMultiDiscardMany,
 		},
 	}
 
-	for _, test := range tests {
-		testFunc := test.function
-		t.Run(test.scenario, func(t *testing.T) {
-			t.Parallel()
-			deadline := time.Now().Add(4 * time.Second)
+	t.Run("short-lived", func(t *testing.T) {
+		t.Parallel()
 
-			ctx, cancel := context.WithDeadline(context.Background(), deadline)
-			defer cancel()
+		for _, test := range tests {
+			testFunc := test.function
+			t.Run(test.scenario, func(t *testing.T) {
+				t.Parallel()
+				deadline := time.Now().Add(4 * time.Second)
 
-			c, err := redis.DialContext(ctx, "tcp", "localhost:6379")
-			if err != nil {
-				t.Fatal(err)
+				ctx, cancel := context.WithDeadline(context.Background(), deadline)
+				defer cancel()
+
+				c, err := redis.DialContext(ctx, "tcp", "localhost:6379")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer c.Close()
+
+				c.SetDeadline(deadline)
+				testFunc(t, c)
+			})
+		}
+	})
+
+	t.Run("long-lived", func(t *testing.T) {
+		t.Parallel()
+		deadline := time.Now().Add(4 * time.Second)
+
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+
+		c, err := redis.DialContext(ctx, "tcp", "localhost:6379")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+
+		c.SetDeadline(deadline)
+
+		for _, test := range tests {
+			// In this test suite we're reusing the same connection to excercise
+			// long-lived scenarios, so we cannot run tests that close it or the
+			// next ones will fail.
+			if !test.close {
+				testFunc := test.function
+				t.Run(test.scenario, func(t *testing.T) {
+					testFunc(t, c)
+				})
 			}
-			defer c.Close()
-
-			c.SetDeadline(deadline)
-			testFunc(t, c)
-		})
-	}
+		}
+	})
 }
 
 func testConnCloseHasNoError(t *testing.T, c *redis.Conn) {
@@ -204,125 +253,36 @@ func testConnWriteArgsPingPong(t *testing.T, c *redis.Conn) {
 	if err := c.WriteArgs(redis.List([]byte("PING"))); err != nil {
 		t.Fatal(err)
 	}
-
-	var args = c.ReadArgs()
-	var pong string
-	var value interface{}
-
-	if n := args.Len(); n != 1 {
-		t.Error("bad number of arguments returned in the response to a PING command:", n)
-	}
-
-	if !args.Next(&pong) {
-		t.Error("no arguments returned as a response to a PING command")
-	}
-
-	if pong != "PONG" {
-		t.Error("bad argument returned as a response to a PING command:", pong)
-	}
-
-	for args.Next(&value) {
-		t.Error("too many arguments returned as a response to a PING command:", value)
-	}
-
-	if err := args.Close(); err != nil {
-		t.Error("error reading a response to a PING command:", err)
-	}
+	readArgsEqual(t, c.ReadArgs(), nil, "PONG")
 }
 
 func testConnWriteCommandsPingPong(t *testing.T, c *redis.Conn) {
 	if err := c.WriteCommands(redis.Command{Cmd: "PING"}); err != nil {
 		t.Fatal(err)
 	}
-
-	var args = c.ReadArgs()
-	var pong string
-	var value interface{}
-
-	if n := args.Len(); n != 1 {
-		t.Error("bad number of arguments returned in the response to a PING command:", n)
-	}
-
-	if !args.Next(&pong) {
-		t.Error("no arguments returned as a response to a PING command")
-	}
-
-	if pong != "PONG" {
-		t.Error("bad argument returned as a response to a PING command:", pong)
-	}
-
-	for args.Next(&value) {
-		t.Error("too many arguments returned as a response to a PING command:", value)
-	}
-
-	if err := args.Close(); err != nil {
-		t.Error("error reading a response to a PING command:", err)
-	}
+	readArgsEqual(t, c.ReadArgs(), nil, "PONG")
 }
 
 func testConnSetAndGetSequential(t *testing.T, c *redis.Conn) {
-	var args redis.Args
-	var key = generateKey()
-	var val string
+	key := generateKey()
 
-	if err := c.WriteCommands(redis.Command{Cmd: "SET", Args: redis.List(key, "A")}); err != nil {
-		t.Error(err)
-	}
-	if args = c.ReadArgs(); !args.Next(&val) {
-		t.Error("no values read as response to SET")
-	}
-	if val != "OK" {
-		t.Error("bad value read as response to SET:", val)
-	}
-	if err := args.Close(); err != nil {
-		t.Error("error closing the arguments list:", err)
-	}
+	writeCommands(t, c, redis.Command{Cmd: "SET", Args: redis.List(key, "A")})
+	readArgsEqual(t, c.ReadArgs(), nil, "OK")
 
-	if err := c.WriteCommands(redis.Command{Cmd: "GET", Args: redis.List(key)}); err != nil {
-		t.Error(err)
-	}
-	if args = c.ReadArgs(); !args.Next(&val) {
-		t.Error("no values read as response to GET")
-	}
-	if val != "A" {
-		t.Error("bad value read as response to GET:", val)
-	}
-	if err := args.Close(); err != nil {
-		t.Error("error closing the arguments list:", err)
-	}
+	writeCommands(t, c, redis.Command{Cmd: "GET", Args: redis.List(key)})
+	readArgsEqual(t, c.ReadArgs(), nil, "A")
 }
 
 func testConnSetAndGetPipeline(t *testing.T, c *redis.Conn) {
-	var args redis.Args
-	var key = generateKey()
-	var val string
+	key := generateKey()
 
-	if err := c.WriteCommands(
+	writeCommands(t, c,
 		redis.Command{Cmd: "SET", Args: redis.List(key, "A")},
 		redis.Command{Cmd: "GET", Args: redis.List(key)},
-	); err != nil {
-		t.Error("error writing SET commands:", err)
-	}
+	)
 
-	if args = c.ReadArgs(); !args.Next(&val) {
-		t.Error("no values read as response to SET")
-	}
-	if val != "OK" {
-		t.Error("bad value read as response to SET:", val)
-	}
-	if err := args.Close(); err != nil {
-		t.Error("error closing the arguments list:", err)
-	}
-
-	if args = c.ReadArgs(); !args.Next(&val) {
-		t.Error("no values read as response to GET")
-	}
-	if val != "A" {
-		t.Error("bad value read as response to GET:", val)
-	}
-	if err := args.Close(); err != nil {
-		t.Error("error closing the arguments list:", err)
-	}
+	readArgsEqual(t, c.ReadArgs(), nil, "OK")
+	readArgsEqual(t, c.ReadArgs(), nil, "A")
 }
 
 func testConnMultiSetAndMGetSequential(t *testing.T, c *redis.Conn) {
@@ -335,45 +295,17 @@ func testConnMultiSetAndMGetSequential(t *testing.T, c *redis.Conn) {
 		{generateKey(), "C"},
 	}
 
-	var args redis.Args
-	var val string
-
 	for _, kv := range pairs {
-		if err := c.WriteCommands(redis.Command{Cmd: "SET", Args: redis.List(kv.key, kv.val)}); err != nil {
-			t.Error(err)
-		}
-		if args = c.ReadArgs(); !args.Next(&val) {
-			t.Error("no values read as response to SET")
-		}
-		if val != "OK" {
-			t.Error("bad value read as response to SET:", val)
-		}
-		if err := args.Close(); err != nil {
-			t.Error("error closing the arguments list:", err)
-		}
+		writeCommands(t, c, redis.Command{Cmd: "SET", Args: redis.List(kv.key, kv.val)})
+		readArgsEqual(t, c.ReadArgs(), nil, "OK")
 	}
 
-	if err := c.WriteCommands(redis.Command{
+	writeCommands(t, c, redis.Command{
 		Cmd:  "MGET",
 		Args: redis.List(pairs[0].key, pairs[1].key, pairs[2].key),
-	}); err != nil {
-		t.Error(err)
-	}
+	})
 
-	args = c.ReadArgs()
-
-	for _, kv := range pairs {
-		if !args.Next(&val) {
-			t.Error("no values read as response to MGET")
-		}
-		if val != kv.val {
-			t.Error("bad value read as response to MGET:", val, "!=", kv.val)
-		}
-	}
-
-	if err := args.Close(); err != nil {
-		t.Error("error closing the arguments list:", err)
-	}
+	readArgsEqual(t, c.ReadArgs(), nil, "A", "B", "C")
 }
 
 func testConnMultiSetAndMGetPipeline(t *testing.T, c *redis.Conn) {
@@ -386,44 +318,18 @@ func testConnMultiSetAndMGetPipeline(t *testing.T, c *redis.Conn) {
 		{generateKey(), "C"},
 	}
 
-	var args redis.Args
-	var val string
-
-	if err := c.WriteCommands(
+	writeCommands(t, c,
 		redis.Command{Cmd: "SET", Args: redis.List(pairs[0].key, pairs[0].val)},
 		redis.Command{Cmd: "SET", Args: redis.List(pairs[1].key, pairs[1].val)},
 		redis.Command{Cmd: "SET", Args: redis.List(pairs[2].key, pairs[2].val)},
 		redis.Command{Cmd: "MGET", Args: redis.List(pairs[0].key, pairs[1].key, pairs[2].key)},
-	); err != nil {
-		t.Error(err)
-	}
+	)
 
 	for range pairs {
-		if args = c.ReadArgs(); !args.Next(&val) {
-			t.Error("no values read as response to SET")
-		}
-		if val != "OK" {
-			t.Error("bad value read as response to SET:", val)
-		}
-		if err := args.Close(); err != nil {
-			t.Error("error closing the arguments list:", err)
-		}
+		readArgsEqual(t, c.ReadArgs(), nil, "OK")
 	}
 
-	args = c.ReadArgs()
-
-	for _, kv := range pairs {
-		if !args.Next(&val) {
-			t.Error("no values read as response to MGET")
-		}
-		if val != kv.val {
-			t.Error("bad value read as response to MGET:", val, "!=", kv.val)
-		}
-	}
-
-	if err := args.Close(); err != nil {
-		t.Error("error closing the arguments list:", err)
-	}
+	readArgsEqual(t, c.ReadArgs(), nil, "A", "B", "C")
 }
 
 func testConnSetAndDiscardResponsesSequential(t *testing.T, c *redis.Conn) {
@@ -437,9 +343,7 @@ func testConnSetAndDiscardResponsesSequential(t *testing.T, c *redis.Conn) {
 	}
 
 	for _, kv := range pairs {
-		if err := c.WriteCommands(redis.Command{Cmd: "SET", Args: redis.List(kv.key, kv.val)}); err != nil {
-			t.Error(err)
-		}
+		writeCommands(t, c, redis.Command{Cmd: "SET", Args: redis.List(kv.key, kv.val)})
 		if err := c.ReadArgs().Close(); err != nil {
 			t.Error(err)
 		}
@@ -456,18 +360,14 @@ func testConnSetAndDiscardResponsesPipeline(t *testing.T, c *redis.Conn) {
 		{generateKey(), "C"},
 	}
 
-	if err := c.WriteCommands(
+	writeCommands(t, c,
 		redis.Command{Cmd: "SET", Args: redis.List(pairs[0].key, pairs[0].val)},
 		redis.Command{Cmd: "SET", Args: redis.List(pairs[1].key, pairs[1].val)},
 		redis.Command{Cmd: "SET", Args: redis.List(pairs[2].key, pairs[2].val)},
-	); err != nil {
-		t.Error(err)
-	}
+	)
 
 	for range pairs {
-		if err := c.ReadArgs().Close(); err != nil {
-			t.Error(err)
-		}
+		discardArgs(t, c.ReadArgs())
 	}
 }
 
@@ -481,30 +381,14 @@ func testConnSetInvalidAndSetSequential(t *testing.T, c *redis.Conn) {
 		{generateKey(), "C"},
 	}
 
-	if err := c.WriteCommands(redis.Command{Cmd: "SET", Args: redis.List(pairs[0].key, pairs[0].val)}); err != nil {
-		t.Error(err)
-	}
-	if err := c.ReadArgs().Close(); err != nil {
-		t.Error(err)
-	}
+	writeCommands(t, c, redis.Command{Cmd: "SET", Args: redis.List(pairs[0].key, pairs[0].val)})
+	discardArgs(t, c.ReadArgs())
 
-	if err := c.WriteCommands(redis.Command{Cmd: "SET", Args: redis.List(pairs[1].key)}); err != nil { // missing value
-		t.Error(err)
-	}
-	err := c.ReadArgs().Close()
-	switch e := err.(type) {
-	case *resp.Error:
-		t.Log(e)
-	default:
-		t.Error(err)
-	}
+	writeCommands(t, c, redis.Command{Cmd: "SET", Args: redis.List(pairs[1].key)}) // missing value
+	readArgsEqual(t, c.ReadArgs(), resp.NewError("ERR wrong number of arguments for 'set' command"))
 
-	if err := c.WriteCommands(redis.Command{Cmd: "SET", Args: redis.List(pairs[2].key, pairs[2].val)}); err != nil {
-		t.Error(err)
-	}
-	if err := c.ReadArgs().Close(); err != nil {
-		t.Error(err)
-	}
+	writeCommands(t, c, redis.Command{Cmd: "SET", Args: redis.List(pairs[2].key, pairs[2].val)})
+	discardArgs(t, c.ReadArgs())
 }
 
 func testConnSetInvalidAndSetPipeline(t *testing.T, c *redis.Conn) {
@@ -517,94 +401,38 @@ func testConnSetInvalidAndSetPipeline(t *testing.T, c *redis.Conn) {
 		{generateKey(), "C"},
 	}
 
-	if err := c.WriteCommands(
+	writeCommands(t, c,
 		redis.Command{Cmd: "SET", Args: redis.List(pairs[0].key, pairs[0].val)},
 		redis.Command{Cmd: "SET", Args: redis.List(pairs[1].key)}, // missing value
 		redis.Command{Cmd: "SET", Args: redis.List(pairs[2].key, pairs[2].val)},
-	); err != nil {
-		t.Error(err)
-	}
+	)
 
-	// first SET
-	if err := c.ReadArgs().Close(); err != nil {
-		t.Error(err)
-	}
-
-	// second SET (invalid)
-	err := c.ReadArgs().Close()
-	switch e := err.(type) {
-	case *resp.Error:
-		t.Log(e)
-	default:
-		t.Error(err)
-	}
-
-	// third set
-	if err := c.ReadArgs().Close(); err != nil {
-		t.Error(err)
-	}
+	discardArgs(t, c.ReadArgs())
+	readArgsEqual(t, c.ReadArgs(), resp.NewError("ERR wrong number of arguments for 'set' command"))
+	discardArgs(t, c.ReadArgs())
 }
 
 func testConnMultiExecEmpty(t *testing.T, c *redis.Conn) {
-	for i := 0; i != 10; i++ {
-		if err := c.WriteCommands(
-			redis.Command{Cmd: "MULTI"},
-			redis.Command{Cmd: "EXEC"},
-		); err != nil {
-			t.Fatal(err)
-		}
+	writeCommands(t, c,
+		redis.Command{Cmd: "MULTI"},
+		redis.Command{Cmd: "EXEC"},
+	)
 
-		tx, err := c.ReadTxArgs(0)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if args := tx.Next(); args != nil {
-			t.Error("too many argument lists returned by an empty transaction")
-		}
-
-		if err := tx.Close(); err != nil {
-			t.Error("error returned by an empty transaction:", err)
-		}
-	}
+	withTxArgs(t, c, 0, nil, func(tx *redis.TxArgs) {})
 }
 
 func testConnMultiExecSingle(t *testing.T, c *redis.Conn) {
 	key := generateKey()
 
-	for i := 0; i != 10; i++ {
-		if err := c.WriteCommands(
-			redis.Command{Cmd: "MULTI"},
-			redis.Command{Cmd: "SET", Args: redis.List(key, "A")},
-			redis.Command{Cmd: "EXEC"},
-		); err != nil {
-			t.Fatal(err)
-		}
+	writeCommands(t, c,
+		redis.Command{Cmd: "MULTI"},
+		redis.Command{Cmd: "SET", Args: redis.List(key, "A")},
+		redis.Command{Cmd: "EXEC"},
+	)
 
-		tx, err := c.ReadTxArgs(1)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		var status interface{}
-		if args := tx.Next(); args == nil {
-			t.Error("no result list returned for the transaction:", err)
-		} else {
-			if !args.Next(&status) {
-				t.Error("no response returned by the argument list of the transcation")
-			}
-			if status != "OK" {
-				t.Error("bad status returned by the argument list of the transaction:", status)
-			}
-			if err := args.Close(); err != nil {
-				t.Error("error returned by the argument list returned by the transcation:", err)
-			}
-		}
-
-		if err := tx.Close(); err != nil {
-			t.Error("error returned by an empty transaction:", err)
-		}
-	}
+	withTxArgs(t, c, 1, nil, func(tx *redis.TxArgs) {
+		readArgsEqual(t, tx.Next(), nil, "OK")
+	})
 }
 
 func testConnMultiExecMany(t *testing.T, c *redis.Conn) {
@@ -614,75 +442,72 @@ func testConnMultiExecMany(t *testing.T, c *redis.Conn) {
 	key4 := generateKey()
 	key5 := generateKey()
 
-	for i := 0; i != 10; i++ {
-		if err := c.WriteCommands(
-			redis.Command{Cmd: "MULTI"},
-			redis.Command{Cmd: "SET", Args: redis.List(key1, "A")},
-			redis.Command{Cmd: "SET", Args: redis.List(key2, "B")},
-			redis.Command{Cmd: "SET", Args: redis.List(key3, "C")},
-			redis.Command{Cmd: "SET", Args: redis.List(key4, "D")},
-			redis.Command{Cmd: "SET", Args: redis.List(key5, "E")},
-			redis.Command{Cmd: "EXEC"},
-		); err != nil {
-			t.Fatal(err)
-		}
+	writeCommands(t, c,
+		redis.Command{Cmd: "MULTI"},
+		redis.Command{Cmd: "SET", Args: redis.List(key1, "A")},
+		redis.Command{Cmd: "SET", Args: redis.List(key2, "B")},
+		redis.Command{Cmd: "SET", Args: redis.List(key3, "C")},
+		redis.Command{Cmd: "SET", Args: redis.List(key4, "D")},
+		redis.Command{Cmd: "SET", Args: redis.List(key5, "E")},
+		redis.Command{Cmd: "EXEC"},
+	)
 
-		tx, err := c.ReadTxArgs(5)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		for i := 0; i != 5; i++ {
-			var status interface{}
-			if args := tx.Next(); args == nil {
-				t.Error("no result list returned for the transaction:", err)
-			} else {
-				if !args.Next(&status) {
-					t.Error("no response returned by the argument list of the transcation")
-				}
-				if status != "OK" {
-					t.Error("bad status returned by the argument list of the transaction:", status)
-				}
-				if err := args.Close(); err != nil {
-					t.Error("error returned by the argument list returned by the transcation:", err)
-				}
-			}
-		}
-
-		if err := tx.Close(); err != nil {
-			t.Error("error returned by an empty transaction:", err)
-		}
-	}
+	withTxArgs(t, c, 5, nil, func(tx *redis.TxArgs) {
+		readArgsEqual(t, tx.Next(), nil, "OK")
+		readArgsEqual(t, tx.Next(), nil, "OK")
+		readArgsEqual(t, tx.Next(), nil, "OK")
+		readArgsEqual(t, tx.Next(), nil, "OK")
+		readArgsEqual(t, tx.Next(), nil, "OK")
+	})
 }
 
 func testConnMultiDiscardError(t *testing.T, c *redis.Conn) {
-	for i := 0; i != 10; i++ {
-		if err := c.WriteCommands(
-			redis.Command{Cmd: "MULTI"},
-			redis.Command{Cmd: "DISCARD"},
-		); err != nil {
-			t.Fatal(err)
-		}
+	writeCommands(t, c,
+		redis.Command{Cmd: "MULTI"},
+		redis.Command{Cmd: "DISCARD"},
+	)
 
-		tx, err := c.ReadTxArgs(0)
-		if err != nil {
-			t.Fatal(err)
-		}
+	withTxArgs(t, c, 0, redis.ErrDiscard, func(tx *redis.TxArgs) {})
+}
 
-		if args := tx.Next(); args != nil {
-			t.Error("too many argument lists returned by an empty transaction")
-		}
+func testConnMultiDiscardSingle(t *testing.T, c *redis.Conn) {
+	key := generateKey()
 
-		switch err := tx.Close().(type) {
-		case *resp.Error:
-			if err.Type() != "EXECABORT" {
-				t.Error("bad error type:", err)
-			}
+	writeCommands(t, c,
+		redis.Command{Cmd: "MULTI"},
+		redis.Command{Cmd: "SET", Args: redis.List(key, "A")},
+		redis.Command{Cmd: "DISCARD"},
+	)
 
-		default:
-			t.Error("bad error returned by the discarded transaction:", err)
-		}
-	}
+	withTxArgs(t, c, 1, redis.ErrDiscard, func(tx *redis.TxArgs) {
+		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
+	})
+}
+
+func testConnMultiDiscardMany(t *testing.T, c *redis.Conn) {
+	key1 := generateKey()
+	key2 := generateKey()
+	key3 := generateKey()
+	key4 := generateKey()
+	key5 := generateKey()
+
+	writeCommands(t, c,
+		redis.Command{Cmd: "MULTI"},
+		redis.Command{Cmd: "SET", Args: redis.List(key1, "A")},
+		redis.Command{Cmd: "SET", Args: redis.List(key2, "B")},
+		redis.Command{Cmd: "SET", Args: redis.List(key3, "C")},
+		redis.Command{Cmd: "SET", Args: redis.List(key4, "D")},
+		redis.Command{Cmd: "SET", Args: redis.List(key5, "E")},
+		redis.Command{Cmd: "DISCARD"},
+	)
+
+	withTxArgs(t, c, 5, redis.ErrDiscard, func(tx *redis.TxArgs) {
+		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
+		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
+		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
+		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
+		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
+	})
 }
 
 var connKeyTS = time.Now().Format(time.RFC3339)
@@ -690,4 +515,67 @@ var connKeyID uint64
 
 func generateKey() string {
 	return fmt.Sprintf("test-conn.%s.test-conn.%00d", connKeyTS, atomic.AddUint64(&connKeyID, 1))
+}
+
+func writeCommands(t *testing.T, conn *redis.Conn, cmds ...redis.Command) {
+	if err := conn.WriteCommands(cmds...); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func discardArgs(t *testing.T, args redis.Args) {
+	if err := args.Close(); err != nil {
+		t.Error(err)
+	}
+}
+
+func readArgsEqual(t *testing.T, args redis.Args, error error, values ...string) {
+	if args == nil {
+		t.Error("invalid nil argument list")
+		return
+	}
+
+	for i, v := range values {
+		var x string
+
+		if !args.Next(&x) {
+			t.Error("not enough values returned by the list of arguments:")
+			t.Logf("expected: %#v", len(values))
+			t.Logf("found:    %#v", i)
+			break
+		}
+
+		if x != v {
+			t.Error("bad value returned by the list of argument at index", i)
+			t.Logf("expected: %#v", v)
+			t.Logf("found:    %#v", x)
+		}
+	}
+
+	var v interface{}
+	for args.Next(&v) {
+		t.Errorf("unexpected extra value returned by the list of arguments: %#v", v)
+		v = nil
+	}
+
+	if err := args.Close(); !reflect.DeepEqual(err, error) {
+		t.Error("bad error returned when closing the arguments:")
+		t.Logf("expected: %#v", error)
+		t.Logf("found:    %#v", err)
+	}
+}
+
+func withTxArgs(t *testing.T, c *redis.Conn, n int, error error, do func(*redis.TxArgs)) {
+	tx, err := c.ReadTxArgs(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	do(tx)
+
+	if err := tx.Close(); !reflect.DeepEqual(err, error) {
+		t.Error("bad error returned when closing the arguments:")
+		t.Logf("expected: %#v", error)
+		t.Logf("found:    %#v", err)
+	}
 }

@@ -13,6 +13,12 @@ import (
 	"github.com/segmentio/objconv/resp"
 )
 
+var (
+	// ErrDiscard is the error returned to indicate that transactions are
+	// discarded.
+	ErrDiscard = resp.NewError("EXECABORT the transcation was discarded")
+)
+
 // Conn is a low-level API to represent client connections to redis.
 type Conn struct {
 	conn net.Conn
@@ -274,7 +280,7 @@ func (c *Conn) readTxExecArgs(tx *TxArgs, n int) error {
 		if status != "OK" { // OK is returned when a transcation is discarded
 			return fmt.Errorf("unsupported transaction status received: %s", status)
 		}
-		error = resp.NewError("EXECABORT the transcation was discarded")
+		error = ErrDiscard
 
 	default:
 		return fmt.Errorf("unsupported value of type %s returned while reading the status of a redis transaction", t)
@@ -282,7 +288,9 @@ func (c *Conn) readTxExecArgs(tx *TxArgs, n int) error {
 
 	if error != nil {
 		for i := range tx.args {
-			tx.args[i].(*connArgs).respErr = error
+			a := tx.args[i].(*connArgs)
+			a.conn = nil
+			a.respErr = error
 		}
 		tx.err = error
 	}
@@ -459,7 +467,6 @@ func (c *Conn) resetDecoder() {
 
 type connArgs struct {
 	mutex   sync.Mutex
-	locked  bool
 	decoder objconv.StreamDecoder
 	conn    *Conn
 	tx      *TxArgs
@@ -470,17 +477,18 @@ func (args *connArgs) Close() error {
 	var err error
 	args.mutex.Lock()
 
-	for args.next(nil) == nil {
-		// discard all remaining arguments in an attempt to maintain the
-		// connection in a stable state
+	if args.conn != nil {
+		for args.next(nil) == nil {
+			// discard all remaining arguments in an attempt to maintain the
+			// connection in a stable state
+		}
+		if err == nil {
+			err = args.decoder.Err()
+		}
 	}
 
-	if args.respErr != nil {
+	if err == nil && args.respErr != nil {
 		err = args.respErr
-	}
-
-	if err == nil {
-		err = args.decoder.Err()
 	}
 
 	if args.conn != nil {
@@ -535,7 +543,8 @@ func (args *connArgs) next(dst interface{}) (err error) {
 		if typ != objconv.Error {
 			err = args.decoder.Decode(dst)
 		} else {
-			err = args.decoder.Decode(&args.respErr)
+			args.decoder.Decode(&args.respErr)
+			err = args.respErr
 		}
 	}
 
