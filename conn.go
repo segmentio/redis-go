@@ -171,16 +171,25 @@ func (c *Conn) Write(b []byte) (int, error) {
 // The new CommandReader holds the connection's read lock, which is released
 // only when its Close method is called, so a program must make sure to call
 // that method or the connection will be left in an unusable state.
-func (c *Conn) ReadCommands() *CommandReader {
+func (c *Conn) ReadCommands() (*CommandReader, error) {
 	c.rmutex.Lock()
-	r := &CommandReader{
-		conn: c,
-		len:  c.decoder.Len(),
-		dec:  objconv.StreamDecoder{Parser: c.decoder.Parser},
+	c.resetDecoder()
+
+	cmd := ""
+	dec := c.decoder
+
+	if err := dec.Decode(&cmd); err != nil {
+		return nil, err
 	}
-	r.len = c.decoder.Len()
-	r.err = c.decoder.Err()
-	return r
+
+	r := &CommandReader{
+		cmd:   Command{Cmd: cmd},
+		conn:  c,
+		multi: cmd == "MULTI",
+	}
+
+	r.cmd.Args = newCmdArgsReader(dec, r)
+	return r, nil
 }
 */
 
@@ -205,9 +214,9 @@ func (c *Conn) ReadArgs() Args {
 // DISCARD commands).
 //
 // If an error occurs while reading the transaction queuing responses it will be
-// returned by the method, errors that occur while reading the transaction
-// responses themselves are returned by each produced Args' Close method.
-func (c *Conn) ReadTxArgs(n int) (*TxArgs, error) {
+// returned by the TxArgs' Close method, the ReadTxArgs method never returns a
+// nil object, even if the connetion was closed.
+func (c *Conn) ReadTxArgs(n int) *TxArgs {
 	c.rmutex.Lock()
 	c.resetDecoder()
 
@@ -232,10 +241,13 @@ func (c *Conn) ReadTxArgs(n int) (*TxArgs, error) {
 	if err != nil {
 		c.conn.Close()
 		c.rmutex.Unlock()
-		return nil, err
+
+		tx.conn = nil
+		tx.args = nil
+		tx.err = err
 	}
 
-	return tx, nil
+	return tx
 }
 
 func (c *Conn) readMultiArgs(tx *TxArgs) (err error) {
