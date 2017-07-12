@@ -156,12 +156,23 @@ func (c *Conn) Write(b []byte) (int, error) {
 
 	if err != nil {
 		c.conn.Close()
-	} else {
-		err = c.wbuffer.Flush()
 	}
 
 	c.wmutex.Unlock()
 	return n, err
+}
+
+// Flush flushes the connection's internal write buffer.
+func (c *Conn) Flush() error {
+	c.wmutex.Lock()
+	err := c.wbuffer.Flush()
+
+	if err != nil {
+		c.conn.Close()
+	}
+
+	c.wmutex.Unlock()
+	return err
 }
 
 // ReadCommands returns a new CommandReader which reads the next set of commands
@@ -471,6 +482,41 @@ func (c *Conn) resetEncoder() {
 
 func (c *Conn) resetDecoder() {
 	c.decoder = objconv.StreamDecoder{Parser: c.decoder.Parser}
+}
+
+func (c *Conn) waitReadyRead(timeout time.Duration) (err error) {
+	c.rmutex.Lock()
+	if c.rbuffer.Buffered() == 0 {
+		c.setReadTimeout(timeout)
+		_, err = c.rbuffer.Peek(1)
+		c.setReadTimeout(0)
+	}
+	c.rmutex.Unlock()
+	return
+}
+
+func (c *Conn) setTimeout(timeout time.Duration) {
+	if timeout == 0 {
+		c.conn.SetDeadline(time.Time{})
+	} else {
+		c.conn.SetDeadline(time.Now().Add(timeout))
+	}
+}
+
+func (c *Conn) setReadTimeout(timeout time.Duration) {
+	if timeout == 0 {
+		c.conn.SetReadDeadline(time.Time{})
+	} else {
+		c.conn.SetReadDeadline(time.Now().Add(timeout))
+	}
+}
+
+func (c *Conn) setWriteTimeout(timeout time.Duration) {
+	if timeout == 0 {
+		c.conn.SetWriteDeadline(time.Time{})
+	} else {
+		c.conn.SetWriteDeadline(time.Now().Add(timeout))
+	}
 }
 
 type connArgs struct {
