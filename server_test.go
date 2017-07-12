@@ -204,7 +204,7 @@ func TestServer(t *testing.T) {
 
 		wg := sync.WaitGroup{}
 
-		tr := &redis.Transport{ConnsPerHost: 2}
+		tr := &redis.Transport{MaxIdleConns: 2}
 		defer tr.CloseIdleConnections()
 
 		for i := 0; i != 5; i++ {
@@ -275,7 +275,7 @@ func TestServer(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		tr := &redis.Transport{ConnsPerHost: 2}
+		tr := &redis.Transport{MaxIdleConns: 2}
 		defer tr.CloseIdleConnections()
 
 		cli := &redis.Client{Addr: url, Transport: tr}
@@ -295,7 +295,7 @@ func TestServer(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		tr := &redis.Transport{ConnsPerHost: 1}
+		tr := &redis.Transport{MaxIdleConns: 1}
 		defer tr.CloseIdleConnections()
 
 		cli := &redis.Client{Addr: url, Transport: tr}
