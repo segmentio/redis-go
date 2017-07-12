@@ -621,7 +621,7 @@ var connKeyTS = time.Now().Format(time.RFC3339)
 var connKeyID uint64
 
 func generateKey() string {
-	return fmt.Sprintf("test-conn.%s.test-conn.%00d", connKeyTS, atomic.AddUint64(&connKeyID, 1))
+	return fmt.Sprintf("redis-go.%s.%00d", connKeyTS, atomic.AddUint64(&connKeyID, 1))
 }
 
 func writeCommands(t *testing.T, conn *redis.Conn, cmds ...redis.Command) {
