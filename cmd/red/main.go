@@ -22,6 +22,7 @@ func main() {
 		Args: os.Args[1:],
 		Commands: []conf.Command{
 			{"proxy", "Run the RED proxy"},
+			{"test", "Run the RED proxy test"},
 			{"help", "Show the RED help"},
 			{"version", "Show the RED version"},
 		},
@@ -30,6 +31,8 @@ func main() {
 	switch cmd, args := conf.LoadWith(nil, ld); cmd {
 	case "proxy":
 		err = proxy(args)
+	case "test":
+		err = test(args)
 	case "help":
 		ld.PrintHelp(nil)
 	case "version":
