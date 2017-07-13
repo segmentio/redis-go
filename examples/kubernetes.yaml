@@ -12,7 +12,7 @@ spec:
     spec:
       containers:
       - name: red
-        image: segment/red:v0.2.0
+        image: segment/red:latest
         args: [
             "proxy",
             "-upstream", "consul://consul.default.svc.cluster.local:8500/redis?cluster=dev",
