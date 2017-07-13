@@ -2,6 +2,8 @@ package redis
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"time"
 )
 
@@ -116,4 +118,89 @@ func Exec(ctx context.Context, cmd string, args ...interface{}) error {
 // Query is a wrapper around DefaultClient.Query.
 func Query(ctx context.Context, cmd string, args ...interface{}) Args {
 	return DefaultClient.Query(ctx, cmd, args...)
+}
+
+type MultiError []error
+
+func (err MultiError) Error() string {
+	if len(err) > 0 {
+		return fmt.Sprintf("%d errors. First one: '%s'.", len(err), err[0])
+	} else {
+		return fmt.Sprintf("No errors (weird).")
+	}
+}
+
+// WriteTestPattern writes a test pattern to a Redis client. The objective is to read the test pattern back
+// at a later stage using ReadTestPattern.
+func WriteTestPattern(client *Client, n int, keyTempl string, timeout time.Duration) (numSuccess int, numFailure int, err MultiError) {
+	writeErrs := make(chan error, n)
+	waiter := &sync.WaitGroup{}
+	for i := 0; i < n; i++ {
+		key := fmt.Sprintf(keyTempl, i)
+		val := "1"
+		waiter.Add(1)
+		go func(key, val string) {
+			defer waiter.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			if err := client.Exec(ctx, "SET", key, val); err != nil {
+				writeErrs <- err
+			}
+		}(key, val)
+	}
+	waiter.Wait()
+	close(writeErrs)
+	numFailure = len(writeErrs)
+	numSuccess = n - numFailure
+	if len(writeErrs) > 0 {
+		err = make(MultiError, 0)
+		for writeErr := range writeErrs {
+			err = append(err, writeErr)
+		}
+	}
+	return
+}
+
+// ReadTestPattern reads a test pattern (previously writen using WriteTestPattern) from a Redis client and returns hit statistics.
+func ReadTestPattern(client *Client, n int, keyTempl string, timeout time.Duration) (numHits, numMisses int, err error) {
+	type tresult struct {
+		hit bool
+		err error
+	}
+	results := make(chan tresult, n)
+	waiter := &sync.WaitGroup{}
+	for i := 0; i < cap(results); i++ {
+		key := fmt.Sprintf(keyTempl, i)
+		waiter.Add(1)
+		go func(key string, rq chan<- tresult) {
+			defer waiter.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			args := client.Query(ctx, "GET", key)
+			if args.Len() != 1 {
+				rq <- tresult{err: fmt.Errorf("Unexpected response: 1 arg expected; contains %d. ", args.Len())}
+				return
+			}
+			var v string
+			args.Next(&v)
+			if err := args.Close(); err != nil {
+				rq <- tresult{err: err}
+			} else {
+				rq <- tresult{hit: v == "1"}
+			}
+		}(key, results)
+	}
+	waiter.Wait()
+	close(results)
+	for result := range results {
+		if result.err != nil {
+			return 0, 0, result.err
+		}
+		if result.hit {
+			numHits++
+		} else {
+			numMisses++
+		}
+	}
+	return
 }
