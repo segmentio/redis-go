@@ -12,8 +12,12 @@ spec:
     spec:
       containers:
       - name: red
-        image: segment/red:0.1.0
-        args: ["proxy", "-upstream", "consul://consul.default.svc.cluster.local:8500/redis?cluster=dev"]
+        image: segment/red:v0.2.0
+        args: [
+            "proxy",
+            "-upstream", "consul://consul.default.svc.cluster.local:8500/redis?cluster=dev",
+            "-dogstatsd", "datadog-agent-datadog:8125"
+        ]
         ports:
         - containerPort: 6379
           protocol: TCP
