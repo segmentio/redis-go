@@ -2,7 +2,6 @@ package redis
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -112,8 +111,8 @@ type Server struct {
 	ErrorLog *log.Logger
 
 	mutex       sync.Mutex
-	listeners   map[net.Listener]bool
-	connections map[*serverConn]bool
+	listeners   map[net.Listener]struct{}
+	connections map[*Conn]struct{}
 	context     context.Context
 	shutdown    context.CancelFunc
 }
@@ -246,20 +245,19 @@ func (s *Server) Serve(l net.Listener) error {
 		}
 
 		attempt = 0
-		c := newServerConn(conn)
+		c := NewServerConn(conn)
 		s.trackConnection(c)
 		go s.serveConnection(s.context, c, config)
 	}
 }
 
-func (s *Server) serveConnection(ctx context.Context, c *serverConn, config serverConfig) {
+func (s *Server) serveConnection(ctx context.Context, c *Conn, config serverConfig) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer c.Close()
 	defer s.untrackConnection(c)
 
-	orderedLocks := quetex{}
-
+	var cmd Command
 	for {
 		select {
 		default:
@@ -267,46 +265,53 @@ func (s *Server) serveConnection(ctx context.Context, c *serverConn, config serv
 			return
 		}
 
-		if err := c.waitReadyRead(config.idleTimeout); err != nil {
+		if c.waitReadyRead(config.idleTimeout) != nil {
 			return
 		}
 
 		c.setReadTimeout(config.readTimeout)
+		cmdReader := c.ReadCommands()
 
-		reqLock := make(chan error, 1)
-		resLock := orderedLocks.acquire()
-
-		req, err := readRequest(ctx, c, reqLock)
-
-		if err != nil {
-			s.log(err)
-			return
-		}
-
-		res := &responseWriter{
-			conn:    c,
-			lock:    resLock,
-			timeout: config.writeTimeout,
-		}
-
-		go func() {
-			if err := s.serveRequest(res, req); err != nil {
-				c.Close()
-				s.log(err)
+		for cmdReader.Read(&cmd) {
+			if cmd.Cmd == "MULTI" {
+				c.WriteArgs(List(resp.NewError("ERR transactions are not supported")))
+				return
 			}
-			orderedLocks.release()
-		}()
 
-		if err := <-reqLock; err != nil {
+			if err := s.serveCommand(c, &cmd, config); err != nil {
+				s.log(err)
+				break
+			}
+		}
+
+		if err := cmdReader.Close(); err != nil {
 			s.log(err)
 			return
 		}
 	}
 }
 
-func (s *Server) serveRequest(res *responseWriter, req *Request) (err error) {
-	args := req.Args
+func (s *Server) serveCommand(c *Conn, cmd *Command, config serverConfig) (err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), config.readTimeout)
 
+	req := &Request{
+		Cmd:     cmd.Cmd,
+		Args:    cmd.Args,
+		Context: ctx,
+	}
+
+	res := &responseWriter{
+		conn:    c,
+		timeout: config.writeTimeout,
+	}
+
+	err = s.serveRequest(res, req)
+	cmd.Args.Close()
+	cancel()
+	return
+}
+
+func (s *Server) serveRequest(res *responseWriter, req *Request) (err error) {
 	switch req.Cmd {
 	case "PING":
 		msg := "PONG"
@@ -315,7 +320,6 @@ func (s *Server) serveRequest(res *responseWriter, req *Request) (err error) {
 
 	default:
 		err = s.serveRedis(res, req)
-		args.Close()
 	}
 
 	if err == nil {
@@ -326,14 +330,11 @@ func (s *Server) serveRequest(res *responseWriter, req *Request) (err error) {
 }
 
 func (s *Server) serveRedis(res ResponseWriter, req *Request) (err error) {
-	ctx, cancel := context.WithCancel(req.Context)
 	defer func() {
-		cancel()
 		if v := recover(); v != nil {
 			err = convertPanicToError(v)
 		}
 	}()
-	req.Context = ctx
 	s.Handler.ServeRedis(res, req)
 	return
 }
@@ -352,11 +353,11 @@ func (s *Server) trackListener(l net.Listener) {
 	s.mutex.Lock()
 
 	if s.listeners == nil {
-		s.listeners = map[net.Listener]bool{}
+		s.listeners = map[net.Listener]struct{}{}
 		s.context, s.shutdown = context.WithCancel(context.Background())
 	}
 
-	s.listeners[l] = true
+	s.listeners[l] = struct{}{}
 	s.mutex.Unlock()
 }
 
@@ -366,18 +367,18 @@ func (s *Server) untrackListener(l net.Listener) {
 	s.mutex.Unlock()
 }
 
-func (s *Server) trackConnection(c *serverConn) {
+func (s *Server) trackConnection(c *Conn) {
 	s.mutex.Lock()
 
 	if s.connections == nil {
-		s.connections = map[*serverConn]bool{}
+		s.connections = map[*Conn]struct{}{}
 	}
 
-	s.connections[c] = true
+	s.connections[c] = struct{}{}
 	s.mutex.Unlock()
 }
 
-func (s *Server) untrackConnection(c *serverConn) {
+func (s *Server) untrackConnection(c *Conn) {
 	s.mutex.Lock()
 	delete(s.connections, c)
 	s.mutex.Unlock()
@@ -425,6 +426,12 @@ type temporaryError interface {
 	Temporary() bool
 }
 
+type serverConfig struct {
+	idleTimeout  time.Duration
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+}
+
 func backoff(attempt int, minDelay time.Duration, maxDelay time.Duration) time.Duration {
 	d := time.Duration(attempt*attempt) * minDelay
 	if d > maxDelay {
@@ -433,78 +440,11 @@ func backoff(attempt int, minDelay time.Duration, maxDelay time.Duration) time.D
 	return d
 }
 
-type serverConfig struct {
-	idleTimeout  time.Duration
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-}
-
-type serverConn struct {
-	net.Conn
-	r bufio.Reader
-	w bufio.Writer
-	p resp.Parser
-}
-
-func newServerConn(conn net.Conn) *serverConn {
-	c := &serverConn{
-		Conn: conn,
-		r:    *bufio.NewReader(conn),
-		w:    *bufio.NewWriter(conn),
-	}
-	c.p = *resp.NewParser(&c.r)
-	return c
-}
-
-func (c *serverConn) Read(b []byte) (int, error) {
-	return c.r.Read(b)
-}
-
-func (c *serverConn) Write(b []byte) (int, error) {
-	return c.w.Write(b)
-}
-
-func (c *serverConn) Flush() error {
-	return c.w.Flush()
-}
-
-func (c *serverConn) waitReadyRead(timeout time.Duration) (err error) {
-	if br := c.p.Buffered().(*bytes.Reader); br.Len() == 0 {
-		c.setReadTimeout(timeout)
-		_, err = c.r.Peek(1)
-	}
-	return
-}
-
-func (c *serverConn) setReadTimeout(timeout time.Duration) error {
-	return c.SetReadDeadline(deadline(timeout))
-}
-
-func (c *serverConn) setWriteTimeout(timeout time.Duration) error {
-	return c.SetWriteDeadline(deadline(timeout))
-}
-
 func deadline(timeout time.Duration) time.Time {
 	if timeout == 0 {
 		return time.Time{}
 	}
 	return time.Now().Add(timeout)
-}
-
-func readRequest(ctx context.Context, conn *serverConn, done chan<- error) (*Request, error) {
-	args := newByteArgsReader(&conn.p, done)
-
-	req := &Request{
-		Addr:    conn.RemoteAddr().String(),
-		Args:    args,
-		Context: ctx,
-	}
-
-	if !args.Next(&req.Cmd) {
-		return nil, args.Close()
-	}
-
-	return req, nil
 }
 
 func convertPanicToError(v interface{}) (err error) {
@@ -526,8 +466,7 @@ const (
 )
 
 type responseWriter struct {
-	conn    *serverConn
-	lock    <-chan struct{}
+	conn    *Conn
 	wtype   responseWriterType
 	remain  int
 	enc     objconv.Encoder
@@ -604,17 +543,18 @@ func (res *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if res.conn == nil {
 		return nil, nil, ErrHijacked
 	}
-	nc := res.conn.Conn
+	nc := res.conn.conn
 	rw := &bufio.ReadWriter{
-		Reader: &res.conn.r,
-		Writer: &res.conn.w,
+		Reader: &res.conn.rbuffer,
+		Writer: &res.conn.wbuffer,
 	}
 	res.conn = nil
 	return nc, rw, nil
 }
 
 func (res *responseWriter) waitReadyWrite() {
-	<-res.lock
+	// TODO: figure out here how to wait for the previous response to flush to
+	// support pipelining.
 	res.conn.setWriteTimeout(res.timeout)
 }
 

@@ -31,9 +31,6 @@ type Conn struct {
 	wbuffer bufio.Writer
 	encoder objconv.StreamEncoder
 	emitter resp.ClientEmitter
-
-	cancelOnce sync.Once
-	cancelFunc context.CancelFunc
 }
 
 // Dial connects to the redis server at the given address, returing a new client
@@ -57,10 +54,9 @@ func DialContext(ctx context.Context, network string, address string) (*Conn, er
 // connections.
 func NewClientConn(conn net.Conn) *Conn {
 	c := &Conn{
-		conn:       conn,
-		rbuffer:    *bufio.NewReader(conn),
-		wbuffer:    *bufio.NewWriter(conn),
-		cancelFunc: func() {},
+		conn:    conn,
+		rbuffer: *bufio.NewReader(conn),
+		wbuffer: *bufio.NewWriter(conn),
 	}
 	c.parser.Reset(&c.rbuffer)
 	c.emitter.Reset(&c.wbuffer)
@@ -73,10 +69,9 @@ func NewClientConn(conn net.Conn) *Conn {
 // connections.
 func NewServerConn(conn net.Conn) *Conn {
 	c := &Conn{
-		conn:       conn,
-		rbuffer:    *bufio.NewReader(conn),
-		wbuffer:    *bufio.NewWriter(conn),
-		cancelFunc: func() {},
+		conn:    conn,
+		rbuffer: *bufio.NewReader(conn),
+		wbuffer: *bufio.NewWriter(conn),
 	}
 	c.parser.Reset(&c.rbuffer)
 	c.emitter.Reset(&c.wbuffer)
@@ -87,7 +82,6 @@ func NewServerConn(conn net.Conn) *Conn {
 
 // Close closes the kafka connection.
 func (c *Conn) Close() error {
-	c.cancelOnce.Do(c.cancelFunc)
 	return c.conn.Close()
 }
 
@@ -156,12 +150,23 @@ func (c *Conn) Write(b []byte) (int, error) {
 
 	if err != nil {
 		c.conn.Close()
-	} else {
-		err = c.wbuffer.Flush()
 	}
 
 	c.wmutex.Unlock()
 	return n, err
+}
+
+// Flush flushes the connection's internal write buffer.
+func (c *Conn) Flush() error {
+	c.wmutex.Lock()
+	err := c.wbuffer.Flush()
+
+	if err != nil {
+		c.conn.Close()
+	}
+
+	c.wmutex.Unlock()
+	return err
 }
 
 // ReadCommands returns a new CommandReader which reads the next set of commands
@@ -471,6 +476,41 @@ func (c *Conn) resetEncoder() {
 
 func (c *Conn) resetDecoder() {
 	c.decoder = objconv.StreamDecoder{Parser: c.decoder.Parser}
+}
+
+func (c *Conn) waitReadyRead(timeout time.Duration) (err error) {
+	c.rmutex.Lock()
+	if c.rbuffer.Buffered() == 0 {
+		c.setReadTimeout(timeout)
+		_, err = c.rbuffer.Peek(1)
+		c.setReadTimeout(0)
+	}
+	c.rmutex.Unlock()
+	return
+}
+
+func (c *Conn) setTimeout(timeout time.Duration) {
+	if timeout == 0 {
+		c.conn.SetDeadline(time.Time{})
+	} else {
+		c.conn.SetDeadline(time.Now().Add(timeout))
+	}
+}
+
+func (c *Conn) setReadTimeout(timeout time.Duration) {
+	if timeout == 0 {
+		c.conn.SetReadDeadline(time.Time{})
+	} else {
+		c.conn.SetReadDeadline(time.Now().Add(timeout))
+	}
+}
+
+func (c *Conn) setWriteTimeout(timeout time.Duration) {
+	if timeout == 0 {
+		c.conn.SetWriteDeadline(time.Time{})
+	} else {
+		c.conn.SetWriteDeadline(time.Now().Add(timeout))
+	}
 }
 
 type connArgs struct {

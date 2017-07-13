@@ -113,7 +113,6 @@ func makeTransport(config proxyConfig) redis.RoundTripper {
 	// TODO: add metrics
 
 	transport := &redis.Transport{
-		ConnsPerHost: 4,
 		PingTimeout:  10 * time.Second,
 		PingInterval: 15 * time.Second,
 	}
