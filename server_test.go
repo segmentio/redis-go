@@ -114,14 +114,14 @@ func testServerSetAndGracefulShutdown(t *testing.T, ctx context.Context) {
 	key := generateKey()
 
 	srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
-		if req.Cmd != "SET" {
-			t.Error("invalid command received by the server:", req.Cmd)
+		if req.Cmds[0].Cmd != "SET" {
+			t.Error("invalid command received by the server:", req.Cmds[0].Cmd)
 			return
 		}
 
 		var k string
 		var v string
-		req.ParseArgs(&k, &v)
+		req.Cmds[0].ParseArgs(&k, &v)
 
 		if k != key {
 			t.Error("invalid key received by the server:", k)
@@ -156,15 +156,15 @@ func testServerSingleLrangeAndGracefulShutdown(t *testing.T, ctx context.Context
 	key := generateKey()
 
 	srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
-		if req.Cmd != "LRANGE" {
-			t.Error("invalid command received by the server:", req.Cmd)
+		if req.Cmds[0].Cmd != "LRANGE" {
+			t.Error("invalid command received by the server:", req.Cmds[0].Cmd)
 			return
 		}
 
 		var k string
 		var i int
 		var j int
-		req.ParseArgs(&k, &i, &j)
+		req.Cmds[0].ParseArgs(&k, &i, &j)
 
 		if k != key {
 			t.Error("invalid key received by the server:", k)
@@ -222,7 +222,7 @@ func testServerManyLrangeAndGracefulShutdown(t *testing.T, ctx context.Context) 
 	srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
 		var i int
 		var j int
-		req.ParseArgs(nil, &i, &j)
+		req.Cmds[0].ParseArgs(nil, &i, &j)
 
 		res.WriteStream(j - i)
 

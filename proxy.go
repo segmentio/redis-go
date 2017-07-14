@@ -30,46 +30,20 @@ type ReverseProxy struct {
 
 // ServeRedis satisfies the Handler interface.
 func (proxy *ReverseProxy) ServeRedis(w ResponseWriter, r *Request) {
-	switch r.Cmd {
-	case "SUBSCRIBE", "PSUBSCRIBE":
-		var channels []string
-		var channel string
-
-		for r.Args.Next(&channel) {
-			// TOOD: limit the number of channels read here
-			channels = append(channels, channel)
-		}
-
-		if err := r.Args.Close(); err != nil {
-			proxy.log(err)
-			return
-		}
-
-		conn, rw, err := w.(Hijacker).Hijack()
-		if err != nil {
-			proxy.log(err)
-			return
-		}
-
-		proxy.servePubSub(conn, rw, r.Cmd, channels...)
-		// TODO: figure out a way to pass the connection back in regular mode
-
-	default:
-		proxy.serveRequest(w, r)
-	}
+	proxy.serveRequest(w, r)
 }
 
 func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
-	key, ok := req.getKey()
+	keys := make([]string, 0, 10)
+	cmds := req.Cmds
 
-	if !ok {
-		w.Write(errorf("command %q has no key and therefore cannot be proxied", req.Cmd))
-		return
+	for i := range cmds {
+		keys = cmds[i].getKeys(keys)
 	}
 
 	servers, err := proxy.lookupServers(req.Context)
 	if err != nil {
-		w.Write(errorf("bad gateway"))
+		w.Write(errorf("ERR No upstream server were found to route the request to."))
 		proxy.log(err)
 		return
 	}
@@ -77,8 +51,20 @@ func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
 	// TODO: looking up servers and rebuilding the hash ring for every request
 	// is not efficient, we should cache and reuse the state.
 	hashring := makeHashRing(servers...)
+	upstream := ""
 
-	req.Addr = hashring.lookup(key)
+	for _, key := range keys {
+		addr := hashring.lookup(key)
+
+		if len(upstream) == 0 {
+			upstream = addr
+		} else if upstream != addr {
+			w.Write(errorf("EXECABORT The transaction contains keys that hash to different upstream servers."))
+			return
+		}
+	}
+
+	req.Addr = upstream
 	res, err := proxy.roundTrip(req)
 
 	switch err.(type) {
@@ -87,28 +73,75 @@ func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
 		w.Write(err)
 		return
 	default:
-		w.Write(errorf("bad gateway"))
+		w.Write(errorf("ERR Connecting to the upstream server failed."))
 		proxy.log(err)
 		return
 	}
 
-	defer func() {
-		if err := res.Args.Close(); err != nil {
-			proxy.log(err)
+	if res.Args != nil {
+		err = proxy.writeArgs(w, res.Args)
+	} else {
+		err = proxy.writeTxArgs(w, res.TxArgs)
+	}
+
+	if err != nil {
+		// Get caught by the server, that way the connection is closed and not
+		// left in an unpredictable state.
+		panic(err)
+	}
+}
+
+func (proxy *ReverseProxy) writeTxArgs(w ResponseWriter, tx TxArgs) (err error) {
+	w.WriteStream(tx.Len())
+	var v []interface{} // TODO: figure out a way to avoid loading values in memory
+
+	for a := tx.Next(); a != nil; a = tx.Next() {
+		n := 0
+		v = append(v, nil)
+
+		for a.Next(&v[n]) {
+			v = append(v, nil)
+			n++
 		}
-	}()
 
-	if err := w.WriteStream(res.Args.Len()); err != nil {
-		w.Write(errorf("internal server error"))
-		proxy.log(err)
-		return
+		err = a.Close()
+
+		if _, ok := err.(*resp.Error); ok {
+			v = append(v, err)
+			n++
+		}
+
+		w.Write(v[:n])
 	}
 
+	if e := tx.Close(); e != nil && err == nil {
+		err = e
+	}
+
+	return
+}
+
+func (proxy *ReverseProxy) writeArgs(w ResponseWriter, a Args) (err error) {
 	var v interface{}
-	for res.Args.Next(&v) {
+	w.WriteStream(a.Len())
+
+	for a.Next(&v) {
 		w.Write(v)
 		v = nil
 	}
+
+	err = a.Close()
+
+	if e, ok := err.(*resp.Error); ok {
+		w.Write(e)
+		err = nil
+	}
+
+	if f, ok := w.(Flusher); ok {
+		err = f.Flush()
+	}
+
+	return
 }
 
 func (proxy *ReverseProxy) servePubSub(conn net.Conn, rw *bufio.ReadWriter, command string, channels ...string) {

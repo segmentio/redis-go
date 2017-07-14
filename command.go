@@ -24,6 +24,46 @@ type Command struct {
 	Args Args
 }
 
+// ParseArgs parses the list of arguments from the command into the destination
+// pointers, returning an error if something went wrong.
+func (cmd *Command) ParseArgs(dsts ...interface{}) error {
+	return ParseArgs(cmd.Args, dsts...)
+}
+
+func (cmd *Command) getKeys(keys []string) []string {
+	lastIndex := len(keys)
+	keys = append(keys, "")
+
+	if cmd.Args != nil {
+		// TODO: for now we assume commands have only one key
+		if cmd.Args.Next(&keys[lastIndex]) {
+			cmd.Args = MultiArgs(List(keys[lastIndex]), cmd.Args)
+		} else {
+			keys = keys[:lastIndex]
+		}
+	}
+
+	return keys
+}
+
+func (cmd *Command) loadByteArgs() {
+	if cmd.Args != nil {
+		var argList [][]byte
+		var arg []byte
+
+		for cmd.Args.Next(&arg) {
+			argList = append(argList, arg)
+			arg = nil
+		}
+
+		if err := cmd.Args.Close(); err != nil {
+			cmd.Args = newArgsError(err)
+		} else {
+			cmd.Args = &byteArgs{args: argList}
+		}
+	}
+}
+
 // CommandReader is a type produced by the Conn.ReadCommands method to read a
 // single command or a sequence of commands belonging to the same transaction.
 type CommandReader struct {

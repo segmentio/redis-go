@@ -166,7 +166,8 @@ func (t *Transport) RoundTrip(req *Request) (*Response, error) {
 	resch := make(chan *Response, 1)
 	errch := make(chan error, 1)
 
-	go t.roundTrip(conn, req, resch, errch)
+	go t.writeRequest(conn, req, errch)
+	go t.readResponse(conn, req, resch)
 
 	var res *Response
 	var err error
@@ -188,24 +189,52 @@ func (t *Transport) RoundTrip(req *Request) (*Response, error) {
 	return res, err
 }
 
-func (t *Transport) roundTrip(conn *Conn, req *Request, resch chan<- *Response, errch chan<- error) {
-	if err := conn.WriteCommands(Command{Cmd: req.Cmd, Args: req.Args}); err != nil {
-		if req.Args != nil {
-			req.Args.Close()
-		}
+func (t *Transport) writeRequest(conn *Conn, req *Request, errch chan<- error) {
+	err := conn.WriteCommands(req.Cmds...)
+	req.Close()
+	if err != nil {
 		errch <- err
-		return
+	}
+}
+
+func (t *Transport) readResponse(conn *Conn, req *Request, resch chan<- *Response) {
+	var res *Response
+
+	if req.IsTransaction() {
+		res = t.readTransactionResponse(conn, req)
+	} else {
+		res = t.readSimpleResponse(conn, req)
 	}
 
+	resch <- res
+}
+
+func (t *Transport) readTransactionResponse(conn *Conn, req *Request) *Response {
+	args := conn.ReadTxArgs(len(req.Cmds) - 2)
+	return &Response{
+		TxArgs: &transportTxArgs{
+			connPoolPutter: connPoolPutter{
+				host: req.Addr,
+				conn: conn,
+				pool: t.pool,
+			},
+			TxArgs: args,
+		},
+		Request: req,
+	}
+}
+
+func (t *Transport) readSimpleResponse(conn *Conn, req *Request) *Response {
 	args := conn.ReadArgs()
 	args.Len() // waits for the first bytes of the response to arrive
-
-	resch <- &Response{
+	return &Response{
 		Args: &transportArgs{
+			connPoolPutter: connPoolPutter{
+				host: req.Addr,
+				conn: conn,
+				pool: t.pool,
+			},
 			Args: args,
-			host: req.Addr,
-			conn: conn,
-			pool: t.pool,
 		},
 		Request: req,
 	}
@@ -274,26 +303,39 @@ var DefaultDialer = &net.Dialer{
 	DualStack: true,
 }
 
-type transportArgs struct {
-	Args
+type connPoolPutter struct {
 	host string
 	conn *Conn
 	pool *connPool
 	once sync.Once
 }
 
-func (a *transportArgs) Close() error {
-	err := a.Args.Close()
-
+func (c *connPoolPutter) close(err error) error {
 	if err != nil {
 		if _, stable := err.(*resp.Error); !stable {
-			a.once.Do(func() { a.conn.Close() })
-			return err
+			c.once.Do(func() { c.conn.Close() })
 		}
 	}
-
-	a.once.Do(func() { a.pool.putConn(a.host, a.conn) })
+	c.once.Do(func() { c.pool.putConn(c.host, c.conn) })
 	return err
+}
+
+type transportArgs struct {
+	connPoolPutter
+	Args
+}
+
+func (a *transportArgs) Close() error {
+	return a.connPoolPutter.close(a.Args.Close())
+}
+
+type transportTxArgs struct {
+	connPoolPutter
+	TxArgs
+}
+
+func (a *transportTxArgs) Close() error {
+	return a.connPoolPutter.close(a.TxArgs.Close())
 }
 
 func splitNetworkAddress(s string) (string, string) {

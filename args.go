@@ -35,7 +35,7 @@ type Args interface {
 func List(args ...interface{}) Args {
 	list := make([]interface{}, len(args))
 	copy(list, args)
-	return &argsReader{
+	return &argsList{
 		dec: objconv.StreamDecoder{
 			Parser: objconv.NewValueParser(list),
 		},
@@ -66,6 +66,9 @@ func String(args Args) (s string, err error) {
 // ParseArgs reads a list of arguments into a sequence of destination pointers
 // and closes it, returning any error that occurred while parsing the values.
 func ParseArgs(args Args, dsts ...interface{}) error {
+	if args == nil && len(dsts) != 0 {
+		return ErrNilArgs
+	}
 	for _, dst := range dsts {
 		if !args.Next(dst) {
 			break
@@ -126,17 +129,30 @@ func (m *multiArgs) Next(dst interface{}) bool {
 	return true
 }
 
-// TxArgs is a type returned by Conn.ReadTxArgs to produce the list of values
-// received in response to a transaction.
-type TxArgs struct {
+// TxArgs is an interface implemented by types that produce the sequence of
+// argument list in response to a transaction.
+type TxArgs interface {
+	Close() error
+
+	// Len returns the number of argument lists remaining to consume.
+	Len() int
+
+	// Next returns the next argument list of the transaction, or nil if they have
+	// all been consumed.
+	//
+	// When the returned value is not nil the program must call its Close method
+	// before calling any other function of the TxArgs value.
+	Next() Args
+}
+
+type txArgs struct {
 	mutex sync.Mutex
 	conn  *Conn
 	args  []Args
 	err   error
 }
 
-// Close closes tx, allowing the connection to be used for furtherreturning
-func (tx *TxArgs) Close() error {
+func (tx *txArgs) Close() error {
 	tx.mutex.Lock()
 
 	for _, arg := range tx.args {
@@ -165,21 +181,14 @@ func (tx *TxArgs) Close() error {
 	return err
 }
 
-// Len returns the number of argument lists remaining to be read from the
-// transaction.
-func (tx *TxArgs) Len() int {
+func (tx *txArgs) Len() int {
 	tx.mutex.Lock()
 	n := len(tx.args)
 	tx.mutex.Unlock()
 	return n
 }
 
-// Next returns the next argument list of the transaction, or nil if they have
-// all been consumed.
-//
-// When the returned value is not nil the program must call its Close method
-// before calling any other function of the TxArgs value.
-func (tx *TxArgs) Next() Args {
+func (tx *txArgs) Next() Args {
 	tx.mutex.Lock()
 
 	if len(tx.args) == 0 {
@@ -197,30 +206,40 @@ type argsError struct {
 }
 
 func newArgsError(err error) *argsError {
-	return &argsError{
-		err: err,
-	}
+	return &argsError{err: err}
 }
 
 func (args *argsError) Close() error              { return args.err }
 func (args *argsError) Len() int                  { return 0 }
 func (args *argsError) Next(val interface{}) bool { return false }
 
-type argsReader struct {
+type txArgsError struct {
+	err error
+}
+
+func newTxArgsError(err error) *txArgsError {
+	return &txArgsError{err: err}
+}
+
+func (args *txArgsError) Close() error { return args.err }
+func (args *txArgsError) Len() int     { return 0 }
+func (args *txArgsError) Next() Args   { return nil }
+
+type argsList struct {
 	dec  objconv.StreamDecoder
 	err  error
 	once sync.Once
 	done chan<- error
 }
 
-func newArgsReader(p *resp.Parser, done chan<- error) *argsReader {
-	return &argsReader{
+func newArgsReader(p *resp.Parser, done chan<- error) *argsList {
+	return &argsList{
 		dec:  objconv.StreamDecoder{Parser: p},
 		done: done,
 	}
 }
 
-func (args *argsReader) Close() error {
+func (args *argsList) Close() error {
 	args.once.Do(func() {
 		for args.dec.Decode(nil) == nil {
 			// discard all remaining values
@@ -239,14 +258,14 @@ func (args *argsReader) Close() error {
 	return args.err
 }
 
-func (args *argsReader) Len() int {
+func (args *argsList) Len() int {
 	if args.err != nil {
 		return 0
 	}
 	return args.dec.Len()
 }
 
-func (args *argsReader) Next(val interface{}) bool {
+func (args *argsList) Next(val interface{}) bool {
 	if args.err != nil {
 		return false
 	}
@@ -261,63 +280,61 @@ func (args *argsReader) Next(val interface{}) bool {
 	return args.dec.Decode(val) == nil
 }
 
-type byteArgsReader struct {
-	argsReader
-	b []byte
-	a [128]byte
+type byteArgs struct {
+	args [][]byte
+	err  error
 }
 
-func newByteArgsReader(p *resp.Parser, done chan<- error) *byteArgsReader {
-	r := &byteArgsReader{argsReader: *newArgsReader(p, done)}
-	r.b = r.a[:0]
-	return r
+func (args *byteArgs) Close() error {
+	args.args = nil
+	return args.err
 }
 
-func (args *byteArgsReader) Next(val interface{}) (ok bool) {
-	args.b = args.b[:0]
+func (args *byteArgs) Len() int {
+	return len(args.args)
+}
 
-	if ok = args.argsReader.Next(&args.b); ok {
-		if v := reflect.ValueOf(val); v.IsValid() {
-			if err := args.parse(v.Elem()); err != nil {
-				args.err, ok = err, false
-			}
-		}
+func (args *byteArgs) Next(dst interface{}) (ok bool) {
+	if len(args.args) == 0 || args.err != nil {
+		return false
 	}
-
-	return
+	a := args.args[0]
+	args.args = args.args[1:]
+	args.err = args.next(reflect.ValueOf(dst), a)
+	return args.err == nil
 }
 
-func (args *byteArgsReader) parse(v reflect.Value) error {
+func (args *byteArgs) next(v reflect.Value, a []byte) error {
 	switch v.Kind() {
 	case reflect.Bool:
-		return args.parseBool(v)
+		return args.parseBool(v, a)
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return args.parseInt(v)
+		return args.parseInt(v, a)
 
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return args.parseUint(v)
+		return args.parseUint(v, a)
 
 	case reflect.Float32, reflect.Float64:
-		return args.parseFloat(v)
+		return args.parseFloat(v, a)
 
 	case reflect.String:
-		return args.parseString(v)
+		return args.parseString(v, a)
 
 	case reflect.Slice:
 		if v.Type().Elem().Kind() == reflect.Uint8 {
-			return args.parseBytes(v)
+			return args.parseBytes(v, a)
 		}
 
 	case reflect.Interface:
-		return args.parseValue(v)
+		return args.parseValue(v, a)
 	}
 
 	return fmt.Errorf("unsupported output type for value in argument of a redis command: %s", v.Type())
 }
 
-func (args *byteArgsReader) parseBool(v reflect.Value) error {
-	i, err := objutil.ParseInt(args.b)
+func (args *byteArgs) parseBool(v reflect.Value, a []byte) error {
+	i, err := objutil.ParseInt(a)
 	if err != nil {
 		return err
 	}
@@ -325,8 +342,8 @@ func (args *byteArgsReader) parseBool(v reflect.Value) error {
 	return nil
 }
 
-func (args *byteArgsReader) parseInt(v reflect.Value) error {
-	i, err := objutil.ParseInt(args.b)
+func (args *byteArgs) parseInt(v reflect.Value, a []byte) error {
+	i, err := objutil.ParseInt(a)
 	if err != nil {
 		return err
 	}
@@ -334,8 +351,8 @@ func (args *byteArgsReader) parseInt(v reflect.Value) error {
 	return nil
 }
 
-func (args *byteArgsReader) parseUint(v reflect.Value) error {
-	u, err := strconv.ParseUint(string(args.b), 10, 64) // this could be optimized
+func (args *byteArgs) parseUint(v reflect.Value, a []byte) error {
+	u, err := strconv.ParseUint(string(a), 10, 64) // this could be optimized
 	if err != nil {
 		return err
 	}
@@ -343,8 +360,8 @@ func (args *byteArgsReader) parseUint(v reflect.Value) error {
 	return nil
 }
 
-func (args *byteArgsReader) parseFloat(v reflect.Value) error {
-	f, err := strconv.ParseFloat(string(args.b), 64)
+func (args *byteArgs) parseFloat(v reflect.Value, a []byte) error {
+	f, err := strconv.ParseFloat(string(a), 64)
 	if err != nil {
 		return err
 	}
@@ -352,17 +369,17 @@ func (args *byteArgsReader) parseFloat(v reflect.Value) error {
 	return nil
 }
 
-func (args *byteArgsReader) parseString(v reflect.Value) error {
-	v.SetString(string(args.b))
+func (args *byteArgs) parseString(v reflect.Value, a []byte) error {
+	v.SetString(string(a))
 	return nil
 }
 
-func (args *byteArgsReader) parseBytes(v reflect.Value) error {
-	v.SetBytes(append(v.Bytes()[:0], args.b...))
+func (args *byteArgs) parseBytes(v reflect.Value, a []byte) error {
+	v.SetBytes(a)
 	return nil
 }
 
-func (args *byteArgsReader) parseValue(v reflect.Value) error {
-	v.Set(reflect.ValueOf(append(make([]byte, 0, len(args.b)), args.b...)))
+func (args *byteArgs) parseValue(v reflect.Value, a []byte) error {
+	v.Set(reflect.ValueOf(a))
 	return nil
 }

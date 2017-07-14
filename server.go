@@ -257,7 +257,9 @@ func (s *Server) serveConnection(ctx context.Context, c *Conn, config serverConf
 	defer c.Close()
 	defer s.untrackConnection(c)
 
-	var cmd Command
+	var addr = c.RemoteAddr().String()
+	var cmds []Command
+
 	for {
 		select {
 		default:
@@ -269,34 +271,76 @@ func (s *Server) serveConnection(ctx context.Context, c *Conn, config serverConf
 			return
 		}
 
-		c.setReadTimeout(config.readTimeout)
+		c.setTimeout(config.readTimeout)
 		cmdReader := c.ReadCommands()
 
-		for cmdReader.Read(&cmd) {
-			if cmd.Cmd == "MULTI" {
-				c.WriteArgs(List(resp.NewError("ERR transactions are not supported")))
-				return
+		cmds = cmds[:0]
+		cmds = append(cmds, Command{})
+
+		if !cmdReader.Read(&cmds[0]) {
+			s.log(cmdReader.Close())
+			return
+		}
+
+		if cmds[0].Cmd == "MULTI" {
+			// Transactions have to be loaded in memory because the server has to
+			// interleave responses between each command it receives.
+			for {
+				lastIndex := len(cmds)
+				cmds[lastIndex].loadByteArgs()
+
+				if lastIndex == 0 {
+					c.WriteArgs(List("OK")) // response to MULTI
+				} else {
+					c.WriteArgs(List("QUEUED"))
+				}
+
+				cmds = append(cmds, Command{})
+				cmd := &cmds[lastIndex]
+
+				if !cmdReader.Read(cmd) {
+					cmds = cmds[:lastIndex]
+					break
+				}
 			}
 
-			if err := s.serveCommand(c, &cmd, config); err != nil {
-				s.log(err)
-				break
+			lastIndex := len(cmds) - 1
+
+			if cmds[lastIndex].Cmd == "DISCARD" {
+				cmds[lastIndex].Args.Close()
+
+				if err := c.WriteArgs(List("OK")); err != nil {
+					return
+				}
+
+				continue // discarded transactions are not passed to the handler
 			}
+
+			cmds = cmds[1:lastIndex]
+		}
+
+		if err := s.serveCommands(c, addr, cmds, config); err != nil {
+			s.log(err)
+			return
 		}
 
 		if err := cmdReader.Close(); err != nil {
 			s.log(err)
 			return
 		}
+
+		for i := range cmds {
+			cmds[i] = Command{}
+		}
 	}
 }
 
-func (s *Server) serveCommand(c *Conn, cmd *Command, config serverConfig) (err error) {
+func (s *Server) serveCommands(c *Conn, addr string, cmds []Command, config serverConfig) (err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), config.readTimeout)
 
 	req := &Request{
-		Cmd:     cmd.Cmd,
-		Args:    cmd.Args,
+		Addr:    addr,
+		Cmds:    cmds,
 		Context: ctx,
 	}
 
@@ -306,20 +350,50 @@ func (s *Server) serveCommand(c *Conn, cmd *Command, config serverConfig) (err e
 	}
 
 	err = s.serveRequest(res, req)
-	cmd.Args.Close()
+	req.Close()
 	cancel()
 	return
 }
 
 func (s *Server) serveRequest(res *responseWriter, req *Request) (err error) {
-	switch req.Cmd {
-	case "PING":
-		msg := "PONG"
-		req.ParseArgs(&msg)
-		res.Write(msg)
+	var preparedRes *preparedResponseWriter
+	var w ResponseWriter = res
+	var i int
 
-	default:
-		err = s.serveRedis(res, req)
+	addPreparedResponse := func(i int, v interface{}) {
+		if preparedRes == nil {
+			preparedRes = &preparedResponseWriter{base: res}
+		}
+		preparedRes.responses = append(preparedRes.responses, preparedResponse{
+			index: i,
+			value: v,
+		})
+	}
+
+	for _, cmd := range req.Cmds {
+		switch cmd.Cmd {
+		case "PING":
+			msg := "PONG"
+			cmd.ParseArgs(&msg)
+			addPreparedResponse(i, msg)
+
+		default:
+			req.Cmds[i] = cmd
+			i++
+		}
+	}
+
+	if preparedRes != nil {
+		w = preparedRes
+		w.WriteStream(len(req.Cmds) + len(preparedRes.responses))
+	}
+
+	if req.Cmds = req.Cmds[:i]; len(req.Cmds) != 0 {
+		s.serveRedis(w, req)
+	}
+
+	if err == nil && preparedRes != nil {
+		err = preparedRes.writeRemainingValues()
 	}
 
 	if err == nil {
@@ -485,15 +559,15 @@ func (res *responseWriter) WriteStream(n int) error {
 
 	switch res.wtype {
 	case oneshot:
-		return ErrStreamCalledAfterWrite
+		return ErrWriteStreamCalledAfterWrite
 	case stream:
-		return ErrStreamCalledTooManyTimes
+		return ErrWriteStreamCalledTooManyTimes
 	}
 
 	res.waitReadyWrite()
 	res.wtype = stream
 	res.remain = n
-	res.stream = *resp.NewStreamEncoder(res.conn)
+	res.stream = *resp.NewStreamEncoder(&res.conn.wbuffer)
 	return res.stream.Open(n)
 }
 
@@ -506,7 +580,7 @@ func (res *responseWriter) Write(val interface{}) error {
 		res.waitReadyWrite()
 		res.wtype = oneshot
 		res.remain = 1
-		res.enc = *resp.NewEncoder(res.conn)
+		res.enc = *resp.NewEncoder(&res.conn.wbuffer)
 	}
 
 	if res.remain == 0 {
@@ -536,7 +610,7 @@ func (res *responseWriter) Flush() error {
 		return ErrWriteCalledNotEnoughTimes
 	}
 
-	return res.conn.Flush()
+	return res.conn.wbuffer.Flush()
 }
 
 func (res *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
@@ -555,16 +629,73 @@ func (res *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 func (res *responseWriter) waitReadyWrite() {
 	// TODO: figure out here how to wait for the previous response to flush to
 	// support pipelining.
-	res.conn.setWriteTimeout(res.timeout)
+	if res.timeout != 0 {
+		res.conn.setWriteTimeout(res.timeout)
+	}
+}
+
+type preparedResponseWriter struct {
+	base      ResponseWriter
+	index     int
+	responses []preparedResponse
+}
+
+type preparedResponse struct {
+	index int
+	value interface{}
+}
+
+func (res *preparedResponseWriter) WriteStream(n int) error {
+	return ErrWriteStreamCalledTooManyTimes
+}
+
+func (res *preparedResponseWriter) Write(v interface{}) error {
+	if len(res.responses) != 0 && res.responses[0].index == res.index {
+		if err := res.base.Write(res.responses[0].value); err != nil {
+			return err
+		}
+		res.responses = res.responses[1:]
+	}
+
+	res.index++
+	return res.base.Write(v)
+}
+
+func (res *preparedResponseWriter) Flush() (err error) {
+	if w, ok := res.base.(Flusher); ok {
+		err = w.Flush()
+	}
+	return
+}
+
+func (res *preparedResponseWriter) Hijack() (c net.Conn, rw *bufio.ReadWriter, err error) {
+	if w, ok := res.base.(Hijacker); ok {
+		c, rw, err = w.Hijack()
+	} else {
+		err = ErrNotHijackable
+	}
+	return
+}
+
+func (res *preparedResponseWriter) writeRemainingValues() (err error) {
+	for _, r := range res.responses {
+		if err = res.base.Write(r.value); err != nil {
+			break
+		}
+	}
+	res.responses = nil
+	return
 }
 
 var (
 	// ErrServerClosed is returned by Server.Serve when the server is closed.
-	ErrServerClosed              = errors.New("redis: Server closed")
-	ErrNegativeStreamCount       = errors.New("invalid call to redis.ResponseWriter.Stream with a negative value")
-	ErrStreamCalledAfterWrite    = errors.New("invalid call to redis.ResponseWriter.Stream after redis.ResponseWriter.Write was called")
-	ErrStreamCalledTooManyTimes  = errors.New("multiple calls to ResponseWriter.Stream")
-	ErrWriteCalledTooManyTimes   = errors.New("too many calls to redis.ResponseWriter.Write")
-	ErrWriteCalledNotEnoughTimes = errors.New("not enough calls to redis.ResponseWriter.Write")
-	ErrHijacked                  = errors.New("invalid use of a hijacked redis.ResponseWriter")
+	ErrNilArgs                       = errors.New("cannot parse values from a nil argument list")
+	ErrServerClosed                  = errors.New("redis: Server closed")
+	ErrNegativeStreamCount           = errors.New("invalid call to redis.ResponseWriter.WriteStream with a negative value")
+	ErrWriteStreamCalledAfterWrite   = errors.New("invalid call to redis.ResponseWriter.WriteStream after redis.ResponseWriter.Write was called")
+	ErrWriteStreamCalledTooManyTimes = errors.New("multiple calls to ResponseWriter.WriteStream")
+	ErrWriteCalledTooManyTimes       = errors.New("too many calls to redis.ResponseWriter.Write")
+	ErrWriteCalledNotEnoughTimes     = errors.New("not enough calls to redis.ResponseWriter.Write")
+	ErrHijacked                      = errors.New("invalid use of a hijacked redis.ResponseWriter")
+	ErrNotHijackable                 = errors.New("the response writer is not hijackable")
 )
