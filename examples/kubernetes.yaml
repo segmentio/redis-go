@@ -12,7 +12,7 @@ spec:
     spec:
       containers:
       - name: red
-        image: segment/red:0.4.2
+        image: segment/red:0.5.0
         args: [
             "proxy",
             "-upstream", "consul://consul.default.svc.cluster.local:8500/redis?cluster=dev",
@@ -47,7 +47,7 @@ metadata:
   name: red-test
   namespace: default
 spec:
-  replicas: 10
+  replicas: 20
   template:
     metadata:
       labels:
@@ -55,7 +55,7 @@ spec:
     spec:
       containers:
       - name: red
-        image: segment/red:latest
+        image: segment/red:0.5.0
         args: [
               "test",
               "-proxy", "red:6479",
