@@ -58,7 +58,7 @@ func proxy(args []string) (err error) {
 	defer stats.Flush()
 
 	lstn := makeListener(config.Bind)
-	server := makeProxyServer(config)
+	server := makeProxyServer(stats.DefaultEngine, config)
 
 	if config.Dogstatsd != "" {
 		server.Handler = redisstats.NewHandler(server.Handler)
@@ -90,10 +90,12 @@ func makeListener(addr string) net.Listener {
 	return l
 }
 
-func makeProxyServer(config proxyConfig) *redis.Server {
+func makeProxyServer(eng *stats.Engine, config proxyConfig) *redis.Server {
 	logger := eventslog.NewLogger("", 0, events.DefaultHandler)
+	up := eng.WithTags(stats.Tag{"side", "upstream"})
+	down := eng.WithTags(stats.Tag{"side", "downstream"})
 	return &redis.Server{
-		Handler:      makeReverseProxy(config, logger),
+		Handler:      redisstats.NewHandlerWith(down, makeReverseProxy(up, logger, config)),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  90 * time.Second,
@@ -101,25 +103,19 @@ func makeProxyServer(config proxyConfig) *redis.Server {
 	}
 }
 
-func makeReverseProxy(config proxyConfig, logger *log.Logger) redis.Handler {
+func makeReverseProxy(eng *stats.Engine, logger *log.Logger, config proxyConfig) redis.Handler {
 	return &redis.ReverseProxy{
-		Transport: makeTransport(config),
+		Transport: makeTransport(eng, config),
 		Registry:  makeRegistry(config.Upstream),
 		ErrorLog:  logger,
 	}
 }
 
-func makeTransport(config proxyConfig) redis.RoundTripper {
-	// TODO: add metrics
-
-	transport := &redis.Transport{
+func makeTransport(eng *stats.Engine, config proxyConfig) redis.RoundTripper {
+	return redisstats.NewTransportWith(eng, &redis.Transport{
 		PingTimeout:  10 * time.Second,
 		PingInterval: 15 * time.Second,
-	}
-	if config.Dogstatsd != "" {
-		return redisstats.NewTransport(transport)
-	}
-	return transport
+	})
 }
 
 func makeRegistry(upstream string) (registry redis.ServerRegistry) {
