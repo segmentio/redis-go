@@ -258,8 +258,6 @@ func (s *Server) serveConnection(ctx context.Context, c *Conn, config serverConf
 	defer s.untrackConnection(c)
 
 	var addr = c.RemoteAddr().String()
-	var cmds []Command
-
 	for {
 		select {
 		default:
@@ -274,7 +272,7 @@ func (s *Server) serveConnection(ctx context.Context, c *Conn, config serverConf
 		c.setTimeout(config.readTimeout)
 		cmdReader := c.ReadCommands()
 
-		cmds = cmds[:0]
+		cmds := make([]Command, 0, 4)
 		cmds = append(cmds, Command{})
 
 		if !cmdReader.Read(&cmds[0]) {
@@ -327,10 +325,6 @@ func (s *Server) serveConnection(ctx context.Context, c *Conn, config serverConf
 		if err := cmdReader.Close(); err != nil {
 			s.log(err)
 			return
-		}
-
-		for i := range cmds {
-			cmds[i] = Command{}
 		}
 	}
 }
