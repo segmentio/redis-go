@@ -47,7 +47,7 @@ metadata:
   name: red-test
   namespace: default
 spec:
-  replicas: 5
+  replicas: 10
   template:
     metadata:
       labels:
