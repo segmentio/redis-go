@@ -55,13 +55,14 @@ spec:
     spec:
       containers:
       - name: red
-        image: segment/red:ge-cmd-test-d8eb330f
+        image: segment/red:latest
         args: [
               "test",
               "-proxy", "red:6479",
               "-dogstatsd", "datadog-agent-datadog:8125",
               "-runs", "0",
               "-batch", "1000",
+              "-sleep", "60",
         ]
         ports:
         - containerPort: 6379
