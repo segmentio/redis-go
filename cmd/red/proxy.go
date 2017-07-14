@@ -175,8 +175,10 @@ func makeConsulRegistry(u *url.URL) *consulRegistry {
 		},
 		resolver: &consul.Resolver{
 			OnlyPassing: true,
-			Cache:       &consul.ResolverCache{},
-			Blacklist:   &consul.ResolverBlacklist{},
+			Cache: &consul.ResolverCache{
+				CacheTimeout: 10 * time.Second,
+			},
+			Blacklist: &consul.ResolverBlacklist{},
 		},
 	}
 
@@ -219,6 +221,16 @@ func (r *consulRegistry) LookupServers(ctx context.Context) ([]redis.ServerEndpo
 
 	return servers, nil
 }
+
+func (r *consulRegistry) BlacklistServer(server redis.ServerEndpoint) {
+	stats.Incr("blacklist_server.count")
+	r.resolver.Blacklist.Blacklist(stringAddr(server.Addr), time.Now().Add(10*time.Second))
+}
+
+type stringAddr string
+
+func (a stringAddr) Network() string { return "" }
+func (a stringAddr) String() string  { return string(a) }
 
 func convertPanicToError(v interface{}) error {
 	switch x := v.(type) {
