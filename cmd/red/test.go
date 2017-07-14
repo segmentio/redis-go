@@ -45,8 +45,12 @@ func test(args []string) (err error) {
 	}
 	defer stats.Flush()
 
-	logger.Printf("Starting test.\n\tProxy: %s\n\tDogstatsd: %s\n\tBatch: %d\n\tRuns: %d\n\tSleep: %d\n",
-		config.Proxy, config.Dogstatsd, config.Batch, config.Runs, config.Sleep)
+	logger.Printf("Starting test.")
+	logger.Printf("\tProxy: %s", config.Proxy)
+	logger.Printf("\tDogstatsd: %s", config.Dogstatsd)
+	logger.Printf("\tBatch: %d", config.Batch)
+	logger.Printf("\tRuns: %d", config.Runs)
+	logger.Printf("\tSleep: %d", config.Sleep)
 	for i := 0; config.Runs == 0 || i < config.Runs; i++ {
 		logger.Printf("Starting run #%d.", i)
 		transport := redisstats.NewTransport(&redis.Transport{})
