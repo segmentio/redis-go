@@ -16,7 +16,7 @@ spec:
         args: [
             "proxy",
             "-debug",
-            "-upstream", "consul://consul.default.svc.cluster.local:8500/redis?cluster=demo",
+            "-upstream", "consul://consul.default.svc.cluster.local:8500/redis-demo?cluster=redis-demo",
             "-dogstatsd", "datadog-agent-datadog:8125"
         ]
         ports:
@@ -48,7 +48,7 @@ metadata:
   name: red-test
   namespace: default
 spec:
-  replicas: 40
+  replicas: 100
   template:
     metadata:
       labels:
