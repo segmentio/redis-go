@@ -201,31 +201,6 @@ func (tx *txArgs) Next() Args {
 	return args
 }
 
-type singleTxArgs struct {
-	args Args
-}
-
-func (tx *singleTxArgs) Close() (err error) {
-	if tx.args != nil {
-		err = tx.args.Close()
-		tx.args = nil
-	}
-	return
-}
-
-func (tx *singleTxArgs) Len() int {
-	if tx.args == nil {
-		return 0
-	}
-	return 1
-}
-
-func (tx *singleTxArgs) Next() Args {
-	args := tx.args
-	tx.args = nil
-	return args
-}
-
 type argsError struct {
 	err error
 }
