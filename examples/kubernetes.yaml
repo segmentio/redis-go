@@ -41,23 +41,29 @@ spec:
 
 ---
 
-apiVersion: batch/v1
-kind: Job
+apiVersion: apps/v1beta1
+kind: Deployment
 metadata:
   name: red-test
+  namespace: default
 spec:
-  parallelism: 1
+  replicas: 1
   template:
     metadata:
-      name: red-test
+      labels:
+        app: red-test
     spec:
       containers:
-        - name: red-test
-          image: segment/red:latest
-          args: [
+      - name: red
+        image: segment/red:ge-cmd-test-d8eb330f
+        args: [
               "test",
               "-proxy", "red:6479",
               "-dogstatsd", "datadog-agent-datadog:8125",
-              "-runs", "100"
-          ]
-      restartPolicy: Never
+              "-runs", "0",
+              "-batch", "1000",
+        ]
+        ports:
+        - containerPort: 6379
+          protocol: TCP
+
