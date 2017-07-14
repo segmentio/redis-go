@@ -88,6 +88,7 @@ func (req *Request) getKey() (string, bool) {
 		var key string
 
 		if req.Args.Next(&key) {
+			key = parseKey(key)
 			req.key = &key
 			req.Args = MultiArgs(List(key), req.Args)
 		}
@@ -98,4 +99,25 @@ func (req *Request) getKey() (string, bool) {
 	}
 
 	return *req.key, true
+}
+
+func parseKey(k string) string {
+	var key string
+	var s bool
+	for i := 0; i < len(k); i++ {
+		switch string(k[i]) {
+		case "{":
+			s = true
+		case "}":
+			break
+		default:
+			if s {
+				key += string(k[i])
+			}
+		}
+	}
+	if key == "" {
+		return k
+	}
+	return key
 }
