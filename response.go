@@ -1,39 +1,32 @@
 package redis
 
-import (
-	"io"
-
-	"github.com/segmentio/objconv/resp"
-)
-
 // Response represents the response from a Redis request.
 type Response struct {
 	// Args is the arguments list of the response.
 	//
-	// When the response is obtained from Transport.RoundTrip or from
-	// Client.Do the Args field is never nil.
+	// When the response is obtained from Transport.RoundTrip or from Client.Do
+	// the Args field is never nil.
 	Args Args
+
+	// TxArgs is the argument list of response to requests that were sent as
+	// transactions.
+	TxArgs TxArgs
 
 	// Request is the request that was sent to obtain this Response.
 	Request *Request
 }
 
-// Write writes the response to w.
-//
-// If the argument list is not nil, it is closed after being written.
-func (res *Response) Write(w io.Writer) error {
-	enc := resp.NewStreamEncoder(w)
+// Close closes all arguments of the response.
+func (res *Response) Close() error {
+	var err error
 
 	if res.Args != nil {
-		var val interface{}
-		for res.Args.Next(&val) {
-			if err := enc.Encode(val); err != nil {
-				return err
-			}
-			val = nil
-		}
-		res.Args.Close()
+		err = res.Args.Close()
 	}
 
-	return enc.Close()
+	if res.TxArgs != nil {
+		err = res.TxArgs.Close()
+	}
+
+	return err
 }

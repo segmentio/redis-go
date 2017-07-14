@@ -114,14 +114,14 @@ func testServerSetAndGracefulShutdown(t *testing.T, ctx context.Context) {
 	key := generateKey()
 
 	srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
-		if req.Cmd != "SET" {
-			t.Error("invalid command received by the server:", req.Cmd)
+		if req.Cmds[0].Cmd != "SET" {
+			t.Error("invalid command received by the server:", req.Cmds[0].Cmd)
 			return
 		}
 
 		var k string
 		var v string
-		req.ParseArgs(&k, &v)
+		req.Cmds[0].ParseArgs(&k, &v)
 
 		if k != key {
 			t.Error("invalid key received by the server:", k)
@@ -156,15 +156,15 @@ func testServerSingleLrangeAndGracefulShutdown(t *testing.T, ctx context.Context
 	key := generateKey()
 
 	srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
-		if req.Cmd != "LRANGE" {
-			t.Error("invalid command received by the server:", req.Cmd)
+		if req.Cmds[0].Cmd != "LRANGE" {
+			t.Error("invalid command received by the server:", req.Cmds[0].Cmd)
 			return
 		}
 
 		var k string
 		var i int
 		var j int
-		req.ParseArgs(&k, &i, &j)
+		req.Cmds[0].ParseArgs(&k, &i, &j)
 
 		if k != key {
 			t.Error("invalid key received by the server:", k)
@@ -222,7 +222,7 @@ func testServerManyLrangeAndGracefulShutdown(t *testing.T, ctx context.Context) 
 	srv, url := newServer(redis.HandlerFunc(func(res redis.ResponseWriter, req *redis.Request) {
 		var i int
 		var j int
-		req.ParseArgs(nil, &i, &j)
+		req.Cmds[0].ParseArgs(nil, &i, &j)
 
 		res.WriteStream(j - i)
 
@@ -342,6 +342,10 @@ func testServerWriteErrorToResponseWriter(t *testing.T, ctx context.Context) {
 }
 
 func newServer(handler redis.Handler) (srv *redis.Server, url string) {
+	return newServerTimeout(handler, 100*time.Millisecond)
+}
+
+func newServerTimeout(handler redis.Handler, timeout time.Duration) (srv *redis.Server, url string) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		panic(err)
@@ -349,9 +353,9 @@ func newServer(handler redis.Handler) (srv *redis.Server, url string) {
 
 	srv = &redis.Server{
 		Handler:      handler,
-		ReadTimeout:  100 * time.Millisecond,
-		WriteTimeout: 100 * time.Millisecond,
-		IdleTimeout:  100 * time.Millisecond,
+		ReadTimeout:  timeout,
+		WriteTimeout: timeout,
+		IdleTimeout:  timeout,
 		ErrorLog:     log.New(os.Stderr, "", 0),
 	}
 

@@ -207,11 +207,11 @@ func (c *Conn) ReadArgs() Args {
 // If an error occurs while reading the transaction queuing responses it will be
 // returned by the TxArgs' Close method, the ReadTxArgs method never returns a
 // nil object, even if the connetion was closed.
-func (c *Conn) ReadTxArgs(n int) *TxArgs {
+func (c *Conn) ReadTxArgs(n int) TxArgs {
 	c.rmutex.Lock()
 	c.resetDecoder()
 
-	tx := &TxArgs{
+	tx := &txArgs{
 		conn: c,
 		args: make([]Args, n),
 	}
@@ -241,7 +241,7 @@ func (c *Conn) ReadTxArgs(n int) *TxArgs {
 	return tx
 }
 
-func (c *Conn) readMultiArgs(tx *TxArgs) (err error) {
+func (c *Conn) readMultiArgs(tx *txArgs) (err error) {
 	status, error, err := c.readTxStatus()
 
 	// The redis protocol says that MULTI only returns OK, but here we've
@@ -260,7 +260,7 @@ func (c *Conn) readMultiArgs(tx *TxArgs) (err error) {
 	return
 }
 
-func (c *Conn) readTxExecArgs(tx *TxArgs, n int) error {
+func (c *Conn) readTxExecArgs(tx *txArgs, n int) error {
 	var decoder = objconv.StreamDecoder{Parser: c.decoder.Parser}
 	var error *resp.Error
 	var status string
@@ -311,7 +311,7 @@ func (c *Conn) readTxExecArgs(tx *TxArgs, n int) error {
 	return nil
 }
 
-func (c *Conn) readTxArgs(tx *TxArgs, i int, n int) (int, error) {
+func (c *Conn) readTxArgs(tx *txArgs, i int, n int) (int, error) {
 	status, error, err := c.readTxStatus()
 
 	switch {
@@ -517,7 +517,7 @@ type connArgs struct {
 	mutex   sync.Mutex
 	decoder objconv.StreamDecoder
 	conn    *Conn
-	tx      *TxArgs
+	tx      *txArgs
 	respErr *resp.Error
 }
 

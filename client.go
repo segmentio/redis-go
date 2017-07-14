@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -78,6 +79,17 @@ func (c *Client) Exec(ctx context.Context, cmd string, args ...interface{}) erro
 	return ParseArgs(c.Query(ctx, cmd, args...), nil)
 }
 
+// MultiExec issues a transaction composed of the given list of commands.
+//
+// An error is returned if the request couldn't be sent or if the command was
+// refused by the Redis server.
+//
+// The context passed as first argument allows the operation to be canceled
+// asynchronously.
+func (c *Client) MultiExec(ctx context.Context, cmds ...Command) error {
+	return c.MultiQuery(ctx, cmds...).Close()
+}
+
 // Query issues a request with cmd and args to the Redis server at the address
 // set on the client, returning the response's Args (which is never nil).
 //
@@ -94,8 +106,7 @@ func (c *Client) Query(ctx context.Context, cmd string, args ...interface{}) Arg
 
 	r, err := c.Do(&Request{
 		Addr:    addr,
-		Cmd:     cmd,
-		Args:    List(args...),
+		Cmds:    []Command{{cmd, List(args...)}},
 		Context: ctx,
 	})
 	if err != nil {
@@ -103,6 +114,48 @@ func (c *Client) Query(ctx context.Context, cmd string, args ...interface{}) Arg
 	}
 
 	return r.Args
+}
+
+// MultiQuery issues a transaction composed of the given list of commands to the
+// Redis server at the address set on the client, returning the response's TxArgs
+// (which is never nil).
+//
+// The method automatically wraps the list of commands with MULTI and EXEC, it
+// is an error to put those in the command list.
+//
+// Any error occurring while querying the Redis server will be returned by the
+// TxArgs.Close method of the returned value.
+//
+// The context passed as first argument allows the operation to be canceled
+// asynchronously.
+func (c *Client) MultiQuery(ctx context.Context, cmds ...Command) TxArgs {
+	addr := c.Addr
+	if len(addr) == 0 {
+		addr = "localhost:6379"
+	}
+
+	for _, cmd := range cmds {
+		switch cmd.Cmd {
+		case "MULTI", "EXEC", "DISCARD":
+			return newTxArgsError(fmt.Errorf("commands passed to redis.(*Client).MultiQuery cannot contain MULTI, EXEC, or DISCARD"))
+		}
+	}
+
+	txCmds := make([]Command, 0, len(cmds))
+	txCmds = append(txCmds, Command{Cmd: "MULTI"})
+	txCmds = append(txCmds, cmds...)
+	txCmds = append(txCmds, Command{Cmd: "EXEC"})
+
+	r, err := c.Do(&Request{
+		Addr:    addr,
+		Cmds:    txCmds,
+		Context: ctx,
+	})
+	if err != nil {
+		return newTxArgsError(err)
+	}
+
+	return r.TxArgs
 }
 
 // DefaultClient is the default client and is used by Exec and Query.

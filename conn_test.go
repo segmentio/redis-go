@@ -508,7 +508,7 @@ func testConnMultiExecEmpty(t *testing.T, c *redis.Conn) {
 		redis.Command{Cmd: "EXEC"},
 	)
 
-	withTxArgs(t, c, 0, nil, func(tx *redis.TxArgs) {})
+	withTxArgs(t, c, 0, nil, func(tx redis.TxArgs) {})
 }
 
 func testConnMultiExecSingle(t *testing.T, c *redis.Conn) {
@@ -520,7 +520,7 @@ func testConnMultiExecSingle(t *testing.T, c *redis.Conn) {
 		redis.Command{Cmd: "EXEC"},
 	)
 
-	withTxArgs(t, c, 1, nil, func(tx *redis.TxArgs) {
+	withTxArgs(t, c, 1, nil, func(tx redis.TxArgs) {
 		readArgsEqual(t, tx.Next(), nil, "OK")
 	})
 }
@@ -542,7 +542,7 @@ func testConnMultiExecMany(t *testing.T, c *redis.Conn) {
 		redis.Command{Cmd: "EXEC"},
 	)
 
-	withTxArgs(t, c, 5, nil, func(tx *redis.TxArgs) {
+	withTxArgs(t, c, 5, nil, func(tx redis.TxArgs) {
 		readArgsEqual(t, tx.Next(), nil, "OK")
 		readArgsEqual(t, tx.Next(), nil, "OK")
 		readArgsEqual(t, tx.Next(), nil, "OK")
@@ -557,7 +557,7 @@ func testConnMultiDiscardError(t *testing.T, c *redis.Conn) {
 		redis.Command{Cmd: "DISCARD"},
 	)
 
-	withTxArgs(t, c, 0, redis.ErrDiscard, func(tx *redis.TxArgs) {})
+	withTxArgs(t, c, 0, redis.ErrDiscard, func(tx redis.TxArgs) {})
 }
 
 func testConnMultiDiscardSingle(t *testing.T, c *redis.Conn) {
@@ -569,7 +569,7 @@ func testConnMultiDiscardSingle(t *testing.T, c *redis.Conn) {
 		redis.Command{Cmd: "DISCARD"},
 	)
 
-	withTxArgs(t, c, 1, redis.ErrDiscard, func(tx *redis.TxArgs) {
+	withTxArgs(t, c, 1, redis.ErrDiscard, func(tx redis.TxArgs) {
 		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
 	})
 }
@@ -591,7 +591,7 @@ func testConnMultiDiscardMany(t *testing.T, c *redis.Conn) {
 		redis.Command{Cmd: "DISCARD"},
 	)
 
-	withTxArgs(t, c, 5, redis.ErrDiscard, func(tx *redis.TxArgs) {
+	withTxArgs(t, c, 5, redis.ErrDiscard, func(tx redis.TxArgs) {
 		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
 		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
 		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
@@ -617,7 +617,7 @@ func testConnMultiExecAbortBadCommand(t *testing.T, c *redis.Conn) {
 		redis.Command{Cmd: "EXEC"},
 	)
 
-	withTxArgs(t, c, 5, redis.ErrDiscard, func(tx *redis.TxArgs) {
+	withTxArgs(t, c, 5, redis.ErrDiscard, func(tx redis.TxArgs) {
 		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
 		readArgsEqual(t, tx.Next(), resp.NewError("ERR wrong number of arguments for 'set' command"))
 		readArgsEqual(t, tx.Next(), redis.ErrDiscard)
@@ -642,7 +642,7 @@ func testConnMultiExecManyMulti(t *testing.T, c *redis.Conn) {
 		redis.Command{Cmd: "EXEC"},
 	)
 
-	withTxArgs(t, c, 5, nil, func(tx *redis.TxArgs) {
+	withTxArgs(t, c, 5, nil, func(tx redis.TxArgs) {
 		readArgsEqual(t, tx.Next(), nil, "OK")
 		readArgsEqual(t, tx.Next(), resp.NewError("ERR MULTI calls can not be nested"))
 		readArgsEqual(t, tx.Next(), nil, "OK")
@@ -664,7 +664,7 @@ func testConnMultiExecSubListArguments(t *testing.T, c *redis.Conn) {
 		redis.Command{Cmd: "EXEC"},
 	)
 
-	withTxArgs(t, c, 5, nil, func(tx *redis.TxArgs) {
+	withTxArgs(t, c, 5, nil, func(tx redis.TxArgs) {
 		readArgsEqual(t, tx.Next(), nil, "3")
 		readArgsEqual(t, tx.Next(), nil, "6")
 		readArgsEqual(t, tx.Next(), nil, "C", "D", "E", "F")
@@ -978,7 +978,7 @@ func readArgsEqual(t *testing.T, args redis.Args, error error, values ...string)
 	}
 }
 
-func withTxArgs(t *testing.T, c *redis.Conn, n int, error error, do func(*redis.TxArgs)) {
+func withTxArgs(t *testing.T, c *redis.Conn, n int, error error, do func(redis.TxArgs)) {
 	tx := c.ReadTxArgs(n)
 	do(tx)
 
