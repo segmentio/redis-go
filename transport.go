@@ -227,15 +227,19 @@ func (t *Transport) readTransactionResponse(conn *Conn, req *Request) *Response 
 func (t *Transport) readSimpleResponse(conn *Conn, req *Request) *Response {
 	args := conn.ReadArgs()
 	args.Len() // waits for the first bytes of the response to arrive
-	return &Response{
-		Args: &transportArgs{
-			connPoolPutter: connPoolPutter{
-				host: req.Addr,
-				conn: conn,
-				pool: t.pool,
-			},
-			Args: args,
+
+	targs := &transportArgs{
+		connPoolPutter: connPoolPutter{
+			host: req.Addr,
+			conn: conn,
+			pool: t.pool,
 		},
+		Args: args,
+	}
+
+	return &Response{
+		Args:    targs,
+		TxArgs:  &singleTxArgs{targs},
 		Request: req,
 	}
 }

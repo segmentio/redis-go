@@ -78,25 +78,70 @@ func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
 		return
 	}
 
-	if err := w.WriteStream(res.Args.Len()); err != nil {
-		panic(err)
+	if res.Args != nil {
+		err = proxy.writeArgs(w, res.Args)
+	} else {
+		err = proxy.writeTxArgs(w, res.TxArgs)
 	}
 
+	if err != nil {
+		// Get caught by the server, that way the connection is closed and not
+		// left in an unpredictable state.
+		panic(err)
+	}
+}
+
+func (proxy *ReverseProxy) writeTxArgs(w ResponseWriter, tx TxArgs) (err error) {
+	w.WriteStream(tx.Len())
+	var v []interface{} // TODO: figure out a way to avoid loading values in memory
+
+	for a := tx.Next(); a != nil; a = tx.Next() {
+		n := 0
+		v = append(v, nil)
+
+		for a.Next(&v[n]) {
+			v = append(v, nil)
+			n++
+		}
+
+		err = a.Close()
+
+		if _, ok := err.(*resp.Error); ok {
+			v = append(v, err)
+			n++
+		}
+
+		w.Write(v[:n])
+	}
+
+	if e := tx.Close(); e != nil && err == nil {
+		err = e
+	}
+
+	return
+}
+
+func (proxy *ReverseProxy) writeArgs(w ResponseWriter, a Args) (err error) {
 	var v interface{}
-	for res.Args.Next(&v) {
+	w.WriteStream(a.Len())
+
+	for a.Next(&v) {
 		w.Write(v)
 		v = nil
 	}
 
-	if err := res.Args.Close(); err != nil {
-		if e, ok := err.(*resp.Error); ok {
-			w.Write(e)
-		} else {
-			// Get caught by the server, that way the connection is closed and not
-			// left in an unpredictable state.
-			panic(err)
-		}
+	err = a.Close()
+
+	if e, ok := err.(*resp.Error); ok {
+		w.Write(e)
+		err = nil
 	}
+
+	if f, ok := w.(Flusher); ok {
+		err = f.Flush()
+	}
+
+	return
 }
 
 func (proxy *ReverseProxy) servePubSub(conn net.Conn, rw *bufio.ReadWriter, command string, channels ...string) {

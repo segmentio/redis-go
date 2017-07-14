@@ -35,7 +35,7 @@ type Args interface {
 func List(args ...interface{}) Args {
 	list := make([]interface{}, len(args))
 	copy(list, args)
-	return &argsReader{
+	return &argsList{
 		dec: objconv.StreamDecoder{
 			Parser: objconv.NewValueParser(list),
 		},
@@ -201,6 +201,31 @@ func (tx *txArgs) Next() Args {
 	return args
 }
 
+type singleTxArgs struct {
+	args Args
+}
+
+func (tx *singleTxArgs) Close() (err error) {
+	if tx.args != nil {
+		err = tx.args.Close()
+		tx.args = nil
+	}
+	return
+}
+
+func (tx *singleTxArgs) Len() int {
+	if tx.args == nil {
+		return 0
+	}
+	return 1
+}
+
+func (tx *singleTxArgs) Next() Args {
+	args := tx.args
+	tx.args = nil
+	return args
+}
+
 type argsError struct {
 	err error
 }
@@ -225,21 +250,21 @@ func (args *txArgsError) Close() error { return args.err }
 func (args *txArgsError) Len() int     { return 0 }
 func (args *txArgsError) Next() Args   { return nil }
 
-type argsReader struct {
+type argsList struct {
 	dec  objconv.StreamDecoder
 	err  error
 	once sync.Once
 	done chan<- error
 }
 
-func newArgsReader(p *resp.Parser, done chan<- error) *argsReader {
-	return &argsReader{
+func newArgsReader(p *resp.Parser, done chan<- error) *argsList {
+	return &argsList{
 		dec:  objconv.StreamDecoder{Parser: p},
 		done: done,
 	}
 }
 
-func (args *argsReader) Close() error {
+func (args *argsList) Close() error {
 	args.once.Do(func() {
 		for args.dec.Decode(nil) == nil {
 			// discard all remaining values
@@ -258,14 +283,14 @@ func (args *argsReader) Close() error {
 	return args.err
 }
 
-func (args *argsReader) Len() int {
+func (args *argsList) Len() int {
 	if args.err != nil {
 		return 0
 	}
 	return args.dec.Len()
 }
 
-func (args *argsReader) Next(val interface{}) bool {
+func (args *argsList) Next(val interface{}) bool {
 	if args.err != nil {
 		return false
 	}

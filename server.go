@@ -567,7 +567,7 @@ func (res *responseWriter) WriteStream(n int) error {
 	res.waitReadyWrite()
 	res.wtype = stream
 	res.remain = n
-	res.stream = *resp.NewStreamEncoder(res.conn)
+	res.stream = *resp.NewStreamEncoder(&res.conn.wbuffer)
 	return res.stream.Open(n)
 }
 
@@ -580,7 +580,7 @@ func (res *responseWriter) Write(val interface{}) error {
 		res.waitReadyWrite()
 		res.wtype = oneshot
 		res.remain = 1
-		res.enc = *resp.NewEncoder(res.conn)
+		res.enc = *resp.NewEncoder(&res.conn.wbuffer)
 	}
 
 	if res.remain == 0 {
@@ -610,7 +610,7 @@ func (res *responseWriter) Flush() error {
 		return ErrWriteCalledNotEnoughTimes
 	}
 
-	return res.conn.Flush()
+	return res.conn.wbuffer.Flush()
 }
 
 func (res *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
@@ -629,7 +629,9 @@ func (res *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 func (res *responseWriter) waitReadyWrite() {
 	// TODO: figure out here how to wait for the previous response to flush to
 	// support pipelining.
-	res.conn.setWriteTimeout(res.timeout)
+	if res.timeout != 0 {
+		res.conn.setWriteTimeout(res.timeout)
+	}
 }
 
 type preparedResponseWriter struct {
