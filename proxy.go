@@ -30,46 +30,20 @@ type ReverseProxy struct {
 
 // ServeRedis satisfies the Handler interface.
 func (proxy *ReverseProxy) ServeRedis(w ResponseWriter, r *Request) {
-	switch r.Cmd {
-	case "SUBSCRIBE", "PSUBSCRIBE":
-		var channels []string
-		var channel string
-
-		for r.Args.Next(&channel) {
-			// TOOD: limit the number of channels read here
-			channels = append(channels, channel)
-		}
-
-		if err := r.Args.Close(); err != nil {
-			proxy.log(err)
-			return
-		}
-
-		conn, rw, err := w.(Hijacker).Hijack()
-		if err != nil {
-			proxy.log(err)
-			return
-		}
-
-		proxy.servePubSub(conn, rw, r.Cmd, channels...)
-		// TODO: figure out a way to pass the connection back in regular mode
-
-	default:
-		proxy.serveRequest(w, r)
-	}
+	proxy.serveRequest(w, r)
 }
 
 func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
-	key, ok := req.getKey()
+	keys := make([]string, 0, 10)
+	cmds := req.Cmds
 
-	if !ok {
-		w.Write(errorf("command %q has no key and therefore cannot be proxied", req.Cmd))
-		return
+	for i := range cmds {
+		keys = cmds[i].getKeys(keys)
 	}
 
 	servers, err := proxy.lookupServers(req.Context)
 	if err != nil {
-		w.Write(errorf("bad gateway"))
+		w.Write(errorf("ERR No upstream server were found to route the request to."))
 		proxy.log(err)
 		return
 	}
@@ -77,8 +51,20 @@ func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
 	// TODO: looking up servers and rebuilding the hash ring for every request
 	// is not efficient, we should cache and reuse the state.
 	hashring := makeHashRing(servers...)
+	upstream := ""
 
-	req.Addr = hashring.lookup(key)
+	for _, key := range keys {
+		addr := hashring.lookup(key)
+
+		if len(upstream) == 0 {
+			upstream = addr
+		} else if upstream != addr {
+			w.Write(errorf("EXECABORT The transaction contains keys that hash to different upstream servers."))
+			return
+		}
+	}
+
+	req.Addr = upstream
 	res, err := proxy.roundTrip(req)
 
 	switch err.(type) {
@@ -87,27 +73,29 @@ func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
 		w.Write(err)
 		return
 	default:
-		w.Write(errorf("bad gateway"))
+		w.Write(errorf("ERR Connecting to the upstream server failed."))
 		proxy.log(err)
 		return
 	}
 
-	defer func() {
-		if err := res.Args.Close(); err != nil {
-			proxy.log(err)
-		}
-	}()
-
 	if err := w.WriteStream(res.Args.Len()); err != nil {
-		w.Write(errorf("internal server error"))
-		proxy.log(err)
-		return
+		panic(err)
 	}
 
 	var v interface{}
 	for res.Args.Next(&v) {
 		w.Write(v)
 		v = nil
+	}
+
+	if err := res.Args.Close(); err != nil {
+		if e, ok := err.(*resp.Error); ok {
+			w.Write(e)
+		} else {
+			// Get caught by the server, that way the connection is closed and not
+			// left in an unpredictable state.
+			panic(err)
+		}
 	}
 }
 

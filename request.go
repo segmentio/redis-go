@@ -1,13 +1,6 @@
 package redis
 
-import (
-	"context"
-	"io"
-	"sync"
-
-	"github.com/segmentio/objconv"
-	"github.com/segmentio/objconv/resp"
-)
+import "context"
 
 // A Request represents a Redis request received by a server or to be sent by
 // a client.
@@ -24,23 +17,12 @@ type Request struct {
 	// request.
 	Addr string
 
-	// Cmd is the Redis command that's being sent with this request.
-	Cmd string
-
-	// Args is the list of arguments for the request's command. This field
-	// may be nil for client requests if there are no arguments to send with
-	// the request.
-	//
-	// For server request, Args is never nil, even if there are no values in
-	// the argument list.
-	Args Args
+	// Cmds is the list of commands submitted by the request.
+	Cmds []Command
 
 	// If not nil, this context is used to control asynchronous cancellation of
 	// the request when it is passed to a RoundTripper.
 	Context context.Context
-
-	once sync.Once
-	key  *string
 }
 
 // NewRequest returns a new Request, given an address, command, and list of
@@ -48,54 +30,27 @@ type Request struct {
 func NewRequest(addr string, cmd string, args Args) *Request {
 	return &Request{
 		Addr: addr,
-		Cmd:  cmd,
-		Args: args,
+		Cmds: []Command{{cmd, args}},
 	}
 }
 
-// ParseArgs parses the list of arguments from the request into the destination
-// pointers, returning an error if something went wrong.
-func (req *Request) ParseArgs(dsts ...interface{}) error {
-	return ParseArgs(req.Args, dsts...)
-}
+// Close closes all arguments of the request command list.
+func (req *Request) Close() error {
+	var err error
 
-// Write writes the request to w.
-//
-// If the argument list is not nil, it is closed after being written.
-func (req *Request) Write(w io.Writer) error {
-	enc := objconv.StreamEncoder{Emitter: resp.NewClientEmitter(w)}
-
-	if err := enc.Encode(req.Cmd); err != nil {
-		return err
-	}
-
-	if req.Args != nil {
-		var val interface{}
-		for req.Args.Next(&val) {
-			if err := enc.Encode(val); err != nil {
-				return err
+	for _, cmd := range req.Cmds {
+		if cmd.Args != nil {
+			if e := cmd.Args.Close(); e != nil && err == nil {
+				err = e
 			}
-			val = nil
 		}
-		req.Args.Close()
 	}
 
-	return enc.Close()
+	return err
 }
 
-func (req *Request) getKey() (string, bool) {
-	req.once.Do(func() {
-		var key string
-
-		if req.Args.Next(&key) {
-			req.key = &key
-			req.Args = MultiArgs(List(key), req.Args)
-		}
-	})
-
-	if req.key == nil {
-		return "", false
-	}
-
-	return *req.key, true
+// IsTransaction returns true if the request is configured to run as a
+// transaction, false otherwise.
+func (req *Request) IsTransaction() bool {
+	return len(req.Cmds) == 0 || req.Cmds[0].Cmd == "MULTI"
 }

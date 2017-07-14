@@ -34,7 +34,6 @@ func TestClient(t *testing.T, makeClient MakeClient) {
 			scenario: "sends SET and GET commands and verify that the correct values are read",
 			function: testClientSetAndGet,
 		},
-
 		{
 			scenario: "subscribe to channels, publish messages to some of those channels, and verify that they are read by the subscriber",
 			function: testClientSubscribe,
