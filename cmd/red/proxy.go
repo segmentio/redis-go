@@ -194,6 +194,7 @@ func makeConsulRegistry(u *url.URL) *consulRegistry {
 		r.client.Address,
 	)
 
+	var _ redis.ServerBlacklist = r
 	return r
 }
 
