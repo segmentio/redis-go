@@ -20,7 +20,7 @@ type testConfig struct {
 	Dogstatsd string `conf:"dogstatsd" help:"Address of the dogstatsd agent to send metrics to, in ip:port format."                validate:"nonzero"`
 	Batch     int    `conf:"batch" help:"Test batch size: number of keys to read and write in each test run."`
 	Runs      int    `conf:"runs" help:"Number of times to cycle the test. Specify zero to run indefinitely."`
-	Sleep     int    `conf:"sleep" help:"Maximum interval, in seconds, that each operation is delayed in order to throttle traffic to the proxy."`
+	Sleep     int    `conf:"sleep" help:"Maximum interval, in seconds, that each operation is uniformly randomly delayed in order to throttle traffic to the proxy."`
 }
 
 func test(args []string) (err error) {
