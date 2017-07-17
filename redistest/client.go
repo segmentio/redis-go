@@ -3,9 +3,8 @@ package redistest
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"reflect"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,8 +16,8 @@ import (
 type Client interface {
 	Exec(context.Context, string, ...interface{}) error
 	Query(context.Context, string, ...interface{}) redis.Args
-	Subscribe(context.Context, ...string) (*redis.SubConn, error)
-	PSubscribe(context.Context, ...string) (*redis.SubConn, error)
+	MultiExec(context.Context, ...redis.Command) error
+	MultiQuery(context.Context, ...redis.Command) redis.TxArgs
 }
 
 // MakeClient is the type of factory functions that the TestClient test suite
@@ -29,21 +28,20 @@ type MakeClient func() (client Client, close func(), err error)
 func TestClient(t *testing.T, makeClient MakeClient) {
 	tests := []struct {
 		scenario string
-		function func(*testing.T, context.Context, Client, string)
+		function func(*testing.T, context.Context, Client)
 	}{
 		{
-			scenario: "sends SET and GET commands and verify that the correct values are read",
-			function: testClientSetAndGet,
+			scenario: "submitting APPEND commands returns the expected results",
+			function: testClientAppend,
 		},
 		{
-			scenario: "subscribe to channels, publish messages to some of those channels, and verify that they are read by the subscriber",
-			function: testClientSubscribe,
+			scenario: "submitting BITCOUNT commands returns the expected results",
+			function: testClientBitcount,
 		},
 	}
 
-	for i, test := range tests {
+	for _, test := range tests {
 		testFunc := test.function
-		namespace := fmt.Sprintf("redis-go.test.client.%d", i)
 
 		t.Run(test.scenario, func(t *testing.T) {
 			t.Parallel()
@@ -56,198 +54,85 @@ func TestClient(t *testing.T, makeClient MakeClient) {
 				t.Fatal(err)
 			}
 			defer close()
-			testFunc(t, ctx, client, namespace)
+			testFunc(t, ctx, client)
 		})
 	}
 }
 
-func testClientSetAndGet(t *testing.T, ctx context.Context, client Client, namespace string) {
-	values := []interface{}{
-		"Hello World!",
-	}
+func testClientAppend(t *testing.T, ctx context.Context, client Client) {
+	key := generateKey()
 
-	for _, value := range values {
-		typ := fmt.Sprintf("%T", value)
-		val := value
-		key := namespace + ":" + typ
+	query(t, ctx, client,
+		rt(cmd("APPEND", key, ""), int64(0)),
+		rt(cmd("APPEND", key, "Hello World"), int64(11)),
+		rt(cmd("APPEND", key, "!"), int64(12)),
+	)
+}
 
-		t.Run(typ, func(t *testing.T) {
-			if err := client.Exec(ctx, "SET", key, val); err != nil {
-				t.Error(err)
-				return
-			}
+func testClientBitcount(t *testing.T, ctx context.Context, client Client) {
+	key1 := generateKey()
+	key2 := generateKey()
 
-			get := reflect.New(reflect.TypeOf(val))
-			args := client.Query(ctx, "GET", key)
+	exec(t, ctx, client,
+		cmd("SET", key1, "*"),
+	)
 
-			if !args.Next(get.Interface()) {
-				t.Error(args.Close())
-				return
-			}
+	query(t, ctx, client,
+		rt(cmd("BITCOUNT", key1), int64(3)),
+		rt(cmd("BITCOUNT", key2), int64(0)),
+	)
+}
 
-			if err := args.Close(); err != nil {
-				t.Error(err)
-				return
-			}
-
-			if !reflect.DeepEqual(get.Elem().Interface(), val) {
-				t.Error("values don't match:")
-				t.Logf("expected: %#v", val)
-				t.Logf("found:    %#v", get.Elem().Interface())
-			}
-		})
+func exec(t *testing.T, ctx context.Context, client Client, cmds ...command) {
+	for _, cmd := range cmds {
+		if err := client.Exec(ctx, cmd.cmd, cmd.args...); err != nil {
+			t.Error(err)
+		}
 	}
 }
 
-func testClientSubscribe(t *testing.T, ctx context.Context, client Client, namespace string) {
-	t.Skip("skipping this test for now because the proxy doesn't have PUB/SUB support yet, will add back later")
+func query(t *testing.T, ctx context.Context, client Client, rts ...roundTrip) {
+	for _, rt := range rts {
+		args := client.Query(ctx, rt.cmd.cmd, rt.cmd.args...)
+		values := make([]interface{}, args.Len()+1)
 
-	channelA := namespace + ":A"
-	channelB := namespace + ":B"
-	channelC := namespace + ":C"
+		for i := 0; args.Next(&values[i]); i++ {
+		}
+		values = values[:len(values)-1]
 
-	sub, err := client.Subscribe(ctx, channelA, channelB, channelC)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sub.Close()
-
-	deadline, _ := ctx.Deadline()
-	sub.SetDeadline(deadline)
-
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	go func() {
-		defer wg.Done()
-
-		publish := []struct {
-			channel string
-			message string
-		}{
-			{channelA, "1"},
-			{channelA, "2"},
-			{channelA, "3"},
-			{channelC, "Hello World!"},
+		if err := args.Close(); err != nil {
+			t.Error(err)
 		}
 
-		for _, p := range publish {
-			if err := client.Exec(ctx, "PUBLISH", p.channel, p.message); err != nil {
-				t.Error(err)
-			}
+		if !reflect.DeepEqual(rt.res, values) {
+			t.Error("bad values returned:")
+			t.Logf("expected: %#v", rt.res)
+			t.Logf("found:    %#v", values)
 		}
-	}()
-
-	received := map[string][]string{}
-	expected := map[string][]string{channelA: {"1", "2", "3"}, channelC: {"Hello World!"}}
-
-	for i := 0; i != 4; i++ {
-		channel, message, err := sub.ReadMessage()
-		if err != nil {
-			t.Fatal(err)
-		}
-		received[channel] = append(received[channel], string(message))
-	}
-
-	if !reflect.DeepEqual(expected, received) {
-		t.Error("bad messages received:")
-		t.Logf("expected: %#v", expected)
-		t.Logf("received: %#v", received)
-	}
-
-	wg.Wait()
-}
-
-type multiError []error
-
-func (err multiError) Error() string {
-	if len(err) > 0 {
-		return fmt.Sprintf("%d errors. First one: '%s'.", len(err), err[0])
-	} else {
-		return fmt.Sprintf("No errors.")
 	}
 }
 
-// WriteTestPattern writes a test pattern to a Redis client. The objective is to read the test pattern back
-// at a later stage using ReadTestPattern.
-func WriteTestPattern(client *redis.Client, n int, keyTempl string, sleep time.Duration, timeout time.Duration) (numSuccess int, numFailure int, err error) {
-	writeErrs := make(chan error, n)
-	waiter := &sync.WaitGroup{}
-	for i := 0; i < n; i++ {
-		key := fmt.Sprintf(keyTempl, i)
-		val := "1"
-		waiter.Add(1)
-		go func(key, val string) {
-			defer waiter.Done()
-			time.Sleep(time.Duration(rand.Intn(int(sleep.Seconds()))) * time.Second)
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
-			defer cancel()
-			if err := client.Exec(ctx, "SET", key, val); err != nil {
-				writeErrs <- err
-			}
-		}(key, val)
-	}
-	waiter.Wait()
-	close(writeErrs)
-	numFailure = len(writeErrs)
-	numSuccess = n - numFailure
-	if len(writeErrs) > 0 {
-		var merr multiError
-		for writeErr := range writeErrs {
-			merr = append(merr, writeErr)
-		}
-		return numSuccess, numFailure, merr
-	}
-	return numSuccess, numFailure, nil
+type command struct {
+	cmd  string
+	args []interface{}
 }
 
-// ReadTestPattern reads a test pattern (previously writen using WriteTestPattern) from a Redis client and returns hit statistics.
-func ReadTestPattern(client *redis.Client, n int, keyTempl string, sleep time.Duration, timeout time.Duration) (numHits int, numMisses int, numErrors int, err error) {
-	type tresult struct {
-		hit bool
-		err error
-	}
-	results := make(chan tresult, n)
-	waiter := &sync.WaitGroup{}
-	for i := 0; i < cap(results); i++ {
-		key := fmt.Sprintf(keyTempl, i)
-		waiter.Add(1)
-		go func(key string, rq chan<- tresult) {
-			defer waiter.Done()
-			time.Sleep(time.Duration(rand.Intn(int(sleep.Seconds()))) * time.Second)
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
-			defer cancel()
-			args := client.Query(ctx, "GET", key)
-			if args.Len() != 1 {
-				rq <- tresult{err: fmt.Errorf("Unexpected response: 1 arg expected; contains %d. ", args.Len())}
-				return
-			}
-			var v string
-			args.Next(&v)
-			if err := args.Close(); err != nil {
-				rq <- tresult{err: err}
-			} else {
-				rq <- tresult{hit: v == "1"}
-			}
-		}(key, results)
-	}
-	waiter.Wait()
-	close(results)
-	var merr multiError
-	for result := range results {
-		if result.err != nil {
-			numErrors++
-			merr = append(merr, result.err)
-		} else {
-			if result.hit {
-				numHits++
-			} else {
-				numMisses++
-			}
-		}
-	}
-	if merr != nil {
-		return numHits, numMisses, numErrors, merr
-	}
-	return numHits, numMisses, numErrors, nil
+func cmd(cmd string, args ...interface{}) command {
+	return command{cmd: cmd, args: args}
+}
+
+type roundTrip struct {
+	cmd command
+	res []interface{}
+}
+
+func rt(cmd command, res ...interface{}) roundTrip {
+	return roundTrip{cmd: cmd, res: res}
+}
+
+var connKeyTS = time.Now().Format(time.RFC3339)
+var connKeyID uint64
+
+func generateKey() string {
+	return fmt.Sprintf("redis-go.test.%s.%00d", connKeyTS, atomic.AddUint64(&connKeyID, 1))
 }

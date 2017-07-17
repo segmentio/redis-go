@@ -1,14 +1,15 @@
 package redis_test
 
 import (
-	redis "github.com/segmentio/redis-go"
-	"github.com/segmentio/redis-go/redistest"
-	"github.com/stretchr/testify/assert"
 	"log"
 	"net/url"
 	"os"
 	"testing"
 	"time"
+
+	redis "github.com/segmentio/redis-go"
+	"github.com/segmentio/redis-go/redistest"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestReverseProxy(t *testing.T) {
@@ -43,7 +44,7 @@ func TestReverseProxyHash(t *testing.T) {
 		ErrorLog:  log.New(os.Stderr, "proxy hash test ==> ", 0),
 	}
 
-	_, serverURL := newServerTimeout(proxy, 10000*time.Millisecond)
+	_, serverURL := newServerTimeout(proxy, 10*time.Second)
 	u, _ := url.Parse(serverURL)
 	client := &redis.Client{Addr: u.Host, Transport: transport}
 
@@ -51,8 +52,8 @@ func TestReverseProxyHash(t *testing.T) {
 	n := 160
 	keyTempl := "redis-go.test.rphash.%d"
 
-	sleep := 5 * time.Second
-	timeout := 30 * time.Second
+	sleep := time.Millisecond
+	timeout := time.Second
 
 	numSuccess, numFailure, err := redistest.WriteTestPattern(client, n, keyTempl, sleep, timeout)
 	assert.Equal(t, n, numSuccess, "All writes succeeded")

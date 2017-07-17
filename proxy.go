@@ -38,7 +38,9 @@ func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
 	cmds := req.Cmds
 
 	for i := range cmds {
-		keys = cmds[i].getKeys(keys)
+		cmd := &cmds[i]
+		pck := proxyCommands[cmd.Cmd]
+		keys = pck.getKeys(keys, cmd)
 	}
 
 	servers, err := proxy.lookupServers(req.Context)
@@ -198,4 +200,117 @@ func (proxy *ReverseProxy) transport() RoundTripper {
 
 func errorf(format string, args ...interface{}) error {
 	return resp.NewError(fmt.Sprintf(format, args...))
+}
+
+type keyGetter interface {
+	getKeys(keys []string, cmd *Command) []string
+}
+
+type singleKey struct{}
+
+func (*singleKey) getKeys(keys []string, cmd *Command) []string {
+	lastIndex := len(keys)
+	keys = append(keys, "")
+
+	if cmd.Args.Next(&keys[lastIndex]) {
+		cmd.Args = MultiArgs(List(keys[lastIndex]), cmd.Args)
+	} else {
+		keys = keys[:lastIndex]
+	}
+
+	return keys
+}
+
+type allKeys struct{}
+
+func (*allKeys) getKeys(keys []string, cmd *Command) []string {
+	var key string
+	var args = make([]interface{}, 0, cmd.Args.Len())
+
+	for cmd.Args.Next(&key) {
+		keys = append(keys, key)
+		args = append(args, key)
+		key = ""
+	}
+
+	cmd.Args = List(args...)
+	return keys
+}
+
+type alternateKeys []bool
+
+func (pattern alternateKeys) getKeys(keys []string, cmd *Command) []string {
+	var key string
+	var val interface{}
+	var args = make([]interface{}, 0, cmd.Args.Len())
+
+	for i := 0; true; i++ {
+		if pattern[i%len(pattern)] {
+			if !cmd.Args.Next(&key) {
+				break
+			}
+			keys = append(keys, key)
+			args = append(args, key)
+			key = ""
+		} else {
+			if !cmd.Args.Next(&val) {
+				break
+			}
+			args = append(args, val)
+			val = nil
+		}
+	}
+
+	cmd.Args = List(args...)
+	return keys
+}
+
+type skipAndGet struct {
+	n int
+	g keyGetter
+}
+
+func (s *skipAndGet) getKeys(keys []string, cmd *Command) []string {
+	var val interface{}
+	var args = make([]interface{}, 0, s.n)
+
+	for i := 0; i != s.n; i++ {
+		if !cmd.Args.Next(&val) {
+			break
+		}
+		args = append(args, val)
+		val = nil
+	}
+
+	keys = s.g.getKeys(keys, cmd)
+	cmd.Args = MultiArgs(List(args...), cmd.Args)
+	return keys
+}
+
+var proxyCommands = map[string]keyGetter{
+	// Strings
+	"APPEND":      &singleKey{},
+	"BITCOUNT":    &singleKey{},
+	"BITFIELD":    &singleKey{},
+	"BITOP":       &skipAndGet{2, &allKeys{}},
+	"BITPOS":      &singleKey{},
+	"DECR":        &singleKey{},
+	"DECRBY":      &singleKey{},
+	"GET":         &singleKey{},
+	"GETBIT":      &singleKey{},
+	"GETRANGE":    &singleKey{},
+	"GETSET":      &singleKey{},
+	"INCR":        &singleKey{},
+	"INCRBY":      &singleKey{},
+	"INCRBYFLOAT": &singleKey{},
+	"MGET":        &allKeys{},
+	"MSET":        alternateKeys{true, false},
+	"MSETNX":      alternateKeys{true, false},
+	"PSETEX":      &singleKey{},
+	"SET":         &singleKey{},
+	"SETBIT":      &singleKey{},
+	"SETEX":       &singleKey{},
+	"SETNX":       &singleKey{},
+	"SETRANGE":    &singleKey{},
+	"STRLEN":      &singleKey{},
 }

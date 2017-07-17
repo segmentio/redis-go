@@ -30,22 +30,6 @@ func (cmd *Command) ParseArgs(dsts ...interface{}) error {
 	return ParseArgs(cmd.Args, dsts...)
 }
 
-func (cmd *Command) getKeys(keys []string) []string {
-	lastIndex := len(keys)
-	keys = append(keys, "")
-
-	if cmd.Args != nil {
-		// TODO: for now we assume commands have only one key
-		if cmd.Args.Next(&keys[lastIndex]) {
-			cmd.Args = MultiArgs(List(keys[lastIndex]), cmd.Args)
-		} else {
-			keys = keys[:lastIndex]
-		}
-	}
-
-	return keys
-}
-
 func (cmd *Command) loadByteArgs() {
 	if cmd.Args != nil {
 		var argList [][]byte
