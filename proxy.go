@@ -39,8 +39,12 @@ func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
 
 	for i := range cmds {
 		cmd := &cmds[i]
-		pck := proxyCommands[cmd.Cmd]
-		keys = pck.getKeys(keys, cmd)
+		getter, ok := proxyCommands[cmd.Cmd]
+		if !ok {
+			w.Write(errorf("ERR unknown command '%s'", cmd.Cmd))
+			return
+		}
+		keys = getter.getKeys(keys, cmd)
 	}
 
 	servers, err := proxy.lookupServers(req.Context)

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segmentio/objconv/resp"
 	redis "github.com/segmentio/redis-go"
 )
 
@@ -31,11 +32,15 @@ func TestClient(t *testing.T, makeClient MakeClient) {
 		function func(*testing.T, context.Context, Client)
 	}{
 		{
-			scenario: "submitting APPEND commands returns the expected results",
+			scenario: "sending an unknown command returns an error",
+			function: testClientUnknownCommand,
+		},
+		{
+			scenario: "sending APPEND commands returns the expected results",
 			function: testClientAppend,
 		},
 		{
-			scenario: "submitting BITCOUNT commands returns the expected results",
+			scenario: "sending BITCOUNT commands returns the expected results",
 			function: testClientBitcount,
 		},
 	}
@@ -56,6 +61,12 @@ func TestClient(t *testing.T, makeClient MakeClient) {
 			defer close()
 			testFunc(t, ctx, client)
 		})
+	}
+}
+
+func testClientUnknownCommand(t *testing.T, ctx context.Context, client Client) {
+	if err := client.Exec(ctx, "WHATEVER"); !reflect.DeepEqual(err, resp.NewError("ERR unknown command 'WHATEVER'")) {
+		t.Errorf("bad error: %#v", err)
 	}
 }
 
