@@ -30,7 +30,7 @@ type Conn struct {
 	wmutex  sync.Mutex
 	wbuffer bufio.Writer
 	encoder objconv.StreamEncoder
-	emitter resp.ClientEmitter
+	emitter resp.Emitter
 }
 
 // Dial connects to the redis server at the given address, returing a new client
@@ -76,7 +76,7 @@ func NewServerConn(conn net.Conn) *Conn {
 	c.parser.Reset(&c.rbuffer)
 	c.emitter.Reset(&c.wbuffer)
 	c.decoder = objconv.StreamDecoder{Parser: &c.parser}
-	c.encoder = objconv.StreamEncoder{Emitter: &c.emitter.Emitter}
+	c.encoder = objconv.StreamEncoder{Emitter: &c.emitter}
 	return c
 }
 
