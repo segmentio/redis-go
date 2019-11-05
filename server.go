@@ -92,6 +92,12 @@ type Server struct {
 	// Handler invoked to handle Redis requests, must not be nil.
 	Handler Handler
 
+	// AcceptCallBack when the client establishes the connection
+	AcceptCallBack func(conn *Conn) bool
+
+	// ClosedCallBack  when the client closes the connection
+	ClosedCallBack func(conn *Conn, err error)
+
 	// ReadTimeout is the maximum duration for reading the entire request,
 	// including the reading the argument list.
 	ReadTimeout time.Duration
@@ -244,6 +250,11 @@ func (s *Server) Serve(l net.Listener) error {
 			}
 		}
 
+		if s.AcceptCallBack != nil && !s.AcceptCallBack(conn) {
+			conn.Close()
+			continue
+		}
+
 		attempt = 0
 		c := NewServerConn(conn)
 		s.trackConnection(c)
@@ -258,14 +269,21 @@ func (s *Server) serveConnection(ctx context.Context, c *Conn, config serverConf
 	defer s.untrackConnection(c)
 
 	var addr = c.RemoteAddr().String()
+	var err error
+
+	if s.ClosedCallBack != nil {
+		defer s.ClosedCallBack(c, err)
+	}
+
 	for {
 		select {
 		default:
 		case <-ctx.Done():
+			err = ctx.Err()
 			return
 		}
 
-		if c.waitReadyRead(config.idleTimeout) != nil {
+		if err = c.waitReadyRead(config.idleTimeout); err != nil {
 			return
 		}
 
@@ -276,7 +294,8 @@ func (s *Server) serveConnection(ctx context.Context, c *Conn, config serverConf
 		cmds = append(cmds, Command{})
 
 		if !cmdReader.Read(&cmds[0]) {
-			s.log(cmdReader.Close())
+			err = cmdReader.Close()
+			s.log(err)
 			return
 		}
 
@@ -307,7 +326,7 @@ func (s *Server) serveConnection(ctx context.Context, c *Conn, config serverConf
 			if cmds[lastIndex].Cmd == "DISCARD" {
 				cmds[lastIndex].Args.Close()
 
-				if err := c.WriteArgs(List("OK")); err != nil {
+				if err = c.WriteArgs(List("OK")); err != nil {
 					return
 				}
 
@@ -317,12 +336,12 @@ func (s *Server) serveConnection(ctx context.Context, c *Conn, config serverConf
 			cmds = cmds[1:lastIndex]
 		}
 
-		if err := s.serveCommands(c, addr, cmds, config); err != nil {
+		if err = s.serveCommands(c, addr, cmds, config); err != nil {
 			s.log(err)
 			return
 		}
 
-		if err := cmdReader.Close(); err != nil {
+		if err = cmdReader.Close(); err != nil {
 			s.log(err)
 			return
 		}
