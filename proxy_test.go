@@ -1,8 +1,8 @@
 package redis_test
 
 import (
-	redis "github.com/segmentio/redis-go"
-	"github.com/segmentio/redis-go/redistest"
+	redis "github.com/JoseFeng/redis-go"
+	"github.com/JoseFeng/redis-go/redistest"
 	"github.com/stretchr/testify/assert"
 	"log"
 	"net/url"

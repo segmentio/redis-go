@@ -16,7 +16,7 @@ import (
 	consul "github.com/segmentio/consul-go"
 	"github.com/segmentio/events"
 	eventslog "github.com/segmentio/events/log"
-	redis "github.com/segmentio/redis-go"
+	redis "github.com/JoseFeng/redis-go"
 	"github.com/segmentio/stats"
 	"github.com/segmentio/stats/datadog"
 	"github.com/segmentio/stats/redisstats"
@@ -170,7 +170,7 @@ func makeConsulRegistry(u *url.URL) *consulRegistry {
 		cluster: v.Get("cluster"),
 		client: &consul.Client{
 			Address:    u.Host,
-			UserAgent:  fmt.Sprintf("RED (github.com/segmentio/redis-go, version %s)", version),
+			UserAgent:  fmt.Sprintf("RED (github.com/JoseFeng/redis-go, version %s)", version),
 			Datacenter: v.Get("dc"),
 		},
 		resolver: &consul.Resolver{

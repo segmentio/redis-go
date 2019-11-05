@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/segmentio/redis-go"
+	"github.com/JoseFeng/redis-go"
 )
 
 func main() {

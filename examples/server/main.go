@@ -1,6 +1,6 @@
 package main
 
-import "github.com/segmentio/redis-go"
+import "github.com/JoseFeng/redis-go"
 
 func main() {
 	// Starts a new server speaking the redis protocol, the server automatically
