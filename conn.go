@@ -22,6 +22,7 @@ var (
 type Conn struct {
 	conn net.Conn
 
+	serv    *Server
 	rmutex  sync.Mutex
 	rbuffer bufio.Reader
 	decoder objconv.StreamDecoder
@@ -67,9 +68,10 @@ func NewClientConn(conn net.Conn) *Conn {
 
 // NewServerConn creates a new redis connection from an already open server
 // connections.
-func NewServerConn(conn net.Conn) *Conn {
+func NewServerConn(conn net.Conn, s *Server) *Conn {
 	c := &Conn{
 		conn:    conn,
+		serv:    s,
 		rbuffer: *bufio.NewReader(conn),
 		wbuffer: *bufio.NewWriter(conn),
 	}
@@ -511,6 +513,32 @@ func (c *Conn) setWriteTimeout(timeout time.Duration) {
 	} else {
 		c.conn.SetWriteDeadline(time.Now().Add(timeout))
 	}
+}
+
+
+func (c *Conn) setState(state http.ConnState) {
+	if state > 0xff || state < 0 {
+		panic("internal error")
+	}
+
+	srv := c.serv
+	switch state {
+	case http.StateNew:
+		srv.trackConnection(c)
+	case http.StateHijacked, http.StateClosed:
+		srv.untrackConnection(c)
+	}
+
+	packedState := uint64(time.Now().Unix()<<8) | uint64(state)
+	atomic.StoreUint64(&c.curState.atomic, packedState)
+	if hook := srv.ConnState; hook != nil {
+		hook(c, state)
+	}
+}
+
+func (c *Conn) getState() (state http.ConnState, unixSec int64) {
+	packedState := atomic.LoadUint64(&c.curState.atomic)
+	return http.ConnState(packedState & 0xff), int64(packedState >> 8)
 }
 
 type connArgs struct {
