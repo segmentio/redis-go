@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	redis "github.com/segmentio/redis-go"
+	redis "github.com/JoseFeng/redis-go"
 )
 
 // Client is an interface that must be implemented by types that represent redis

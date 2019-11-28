@@ -3,8 +3,8 @@ package redis_test
 import (
 	"testing"
 
-	redis "github.com/segmentio/redis-go"
-	"github.com/segmentio/redis-go/redistest"
+	redis "github.com/JoseFeng/redis-go"
+	"github.com/JoseFeng/redis-go/redistest"
 )
 
 func TestServerEndpoint(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/segmentio/objconv/resp"
-	redis "github.com/segmentio/redis-go"
+	redis "github.com/JoseFeng/redis-go"
 )
 
 func TestConn(t *testing.T) {
