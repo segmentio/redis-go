@@ -9,11 +9,11 @@ type ServerRegistry interface {
 	LookupServers(ctx context.Context) ([]ServerEndpoint, error)
 }
 
-// ServerBlacklist is implemented by some ServerRegistry to support black
-// listing some server addresses.
-type ServerBlacklist interface {
-	// Blacklist temporarily blacklists the given server endpoint.
-	BlacklistServer(ServerEndpoint)
+// ServerDenyList is implemented by some ServerRegistry to support denying
+// some server addresses.
+type ServerDenylist interface {
+	// DenyServer temporarily denies the given server endpoint.
+	DenyServer(ServerEndpoint)
 }
 
 // A ServerEndpoint represents a single backend redis server.
