@@ -74,7 +74,7 @@ func (proxy *ReverseProxy) serveRequest(w ResponseWriter, req *Request) {
 		return
 	default:
 		w.Write(errorf("ERR Connecting to the upstream server failed."))
-		proxy.blacklistServer(upstream)
+		proxy.denyServer(upstream)
 		proxy.log(err)
 		return
 	}
@@ -161,9 +161,9 @@ func (proxy *ReverseProxy) lookupServers(ctx context.Context) ([]ServerEndpoint,
 	return r.LookupServers(ctx)
 }
 
-func (proxy *ReverseProxy) blacklistServer(upstream string) {
-	if b, ok := proxy.Registry.(ServerBlacklist); !ok {
-		b.BlacklistServer(ServerEndpoint{Addr: upstream})
+func (proxy *ReverseProxy) denyServer(upstream string) {
+	if b, ok := proxy.Registry.(ServerDenylist); !ok {
+		b.DenylistServer(ServerEndpoint{Addr: upstream})
 	}
 }
 

@@ -178,7 +178,7 @@ func makeConsulRegistry(u *url.URL) *consulRegistry {
 			Cache: &consul.ResolverCache{
 				CacheTimeout: 10 * time.Second,
 			},
-			Blacklist: &consul.ResolverBlacklist{},
+			Denylist: &consul.ResolverDenylist{},
 		},
 	}
 
@@ -194,7 +194,7 @@ func makeConsulRegistry(u *url.URL) *consulRegistry {
 		r.client.Address,
 	)
 
-	var _ redis.ServerBlacklist = r
+	var _ redis.ServerDenylist = r
 	return r
 }
 
@@ -223,9 +223,9 @@ func (r *consulRegistry) LookupServers(ctx context.Context) ([]redis.ServerEndpo
 	return servers, nil
 }
 
-func (r *consulRegistry) BlacklistServer(server redis.ServerEndpoint) {
-	stats.Incr("blacklist_server.count")
-	r.resolver.Blacklist.Blacklist(stringAddr(server.Addr), time.Now().Add(10*time.Second))
+func (r *consulRegistry) DenyServer(server redis.ServerEndpoint) {
+	stats.Incr("denied_server.count")
+	r.resolver.Denylist.Denylist(stringAddr(server.Addr), time.Now().Add(10*time.Second))
 }
 
 type stringAddr string
